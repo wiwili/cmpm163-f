@@ -160,17 +160,276 @@
 
 	</script>
 
+	<script id="passthroughVS" type="x-shader/x-vertex">
+	  uniform mat4 modelViewMatrix;
+	  uniform mat4 projectionMatrix;
+
+	  attribute vec3 position;
+	  attribute vec2 uv;
+	  
+	  varying vec2 vUV;
+
+	  void main() {
+	    vUV = uv;
+	    gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+	  }
+	</script>
+	
+	<script id="simulateCondensationFS" type="x-shader/x-fragment">
+	  precision mediump float;
+
+	  uniform vec2 textureSize; //The width and height of our screen
+	  // x = velocity x with 0.0 = -1.0, 0.5 = 0.0, and 1.0 = 1.0
+	  // y = velocity y
+	  // z = volume of water in cm^3
+	  uniform sampler2D waterSimulation;
+	  uniform float time; //In S
+	  uniform float deltaTime; //In S
+	  uniform float condensationRate; //The rate at which noise is added to the volume each frame
+	  uniform bool addWater; //If true, will add water to simulation
+	  
+	  varying vec2 vUV;
+	  
+	  
+	  // START NOISE
+	  // https://github.com/ashima/webgl-noise/blob/master/src/cellular2D.glsl
+	  // Cellular noise ("Worley noise") in 2D in GLSL.
+	  // Copyright (c) Stefan Gustavson 2011-04-19. All rights reserved.
+	  // This code is released under the conditions of the MIT license.
+	  // See LICENSE file for details.
+	  // https://github.com/stegu/webgl-noise
+
+	  // Modulo 289 without a division (only multiplications)
+	  vec3 mod289(vec3 x) {
+	    return x - floor(x * (1.0 / 289.0)) * 289.0;
+	  }
+
+	  vec2 mod289(vec2 x) {
+	    return x - floor(x * (1.0 / 289.0)) * 289.0;
+	  }
+
+	  // Modulo 7 without a division
+	  vec3 mod7(vec3 x) {
+	    return x - floor(x * (1.0 / 7.0)) * 7.0;
+	  }
+
+	  // Permutation polynomial: (34x^2 + x) mod 289
+	  vec3 permute(vec3 x) {
+	    return mod289((34.0 * x + 1.0) * x);
+	  }
+
+	  // Cellular noise, returning F1 and F2 in a vec2.
+	  // Standard 3x3 search window for good F1 and F2 values
+	  vec2 cellular(vec2 P) {
+	  #define K 0.142857142857 // 1/7
+	  #define Ko 0.428571428571 // 3/7
+	  #define jitter 1.0 // Less gives more regular pattern
+	    vec2 Pi = mod289(floor(P));
+	    vec2 Pf = fract(P);
+	    vec3 oi = vec3(-1.0, 0.0, 1.0);
+	    vec3 of = vec3(-0.5, 0.5, 1.5);
+	    vec3 px = permute(Pi.x + oi);
+	    vec3 p = permute(px.x + Pi.y + oi); // p11, p12, p13
+	    vec3 ox = fract(p*K) - Ko;
+	    vec3 oy = mod7(floor(p*K))*K - Ko;
+	    vec3 dx = Pf.x + 0.5 + jitter*ox;
+	    vec3 dy = Pf.y - of + jitter*oy;
+	    vec3 d1 = dx * dx + dy * dy; // d11, d12 and d13, squared
+	    p = permute(px.y + Pi.y + oi); // p21, p22, p23
+	    ox = fract(p*K) - Ko;
+	    oy = mod7(floor(p*K))*K - Ko;
+	    dx = Pf.x - 0.5 + jitter*ox;
+	    dy = Pf.y - of + jitter*oy;
+	    vec3 d2 = dx * dx + dy * dy; // d21, d22 and d23, squared
+	    p = permute(px.z + Pi.y + oi); // p31, p32, p33
+	    ox = fract(p*K) - Ko;
+	    oy = mod7(floor(p*K))*K - Ko;
+	    dx = Pf.x - 1.5 + jitter*ox;
+	    dy = Pf.y - of + jitter*oy;
+	    vec3 d3 = dx * dx + dy * dy; // d31, d32 and d33, squared
+	    // Sort out the two smallest distances (F1, F2)
+	    vec3 d1a = min(d1, d2);
+	    d2 = max(d1, d2); // Swap to keep candidates for F2
+	    d2 = min(d2, d3); // neither F1 nor F2 are now in d3
+	    d1 = min(d1a, d2); // F1 is now in d1
+	    d2 = max(d1a, d2); // Swap to keep candidates for F2
+	    d1.xy = (d1.x < d1.y) ? d1.xy : d1.yx; // Swap if smaller
+	    d1.xz = (d1.x < d1.z) ? d1.xz : d1.zx; // F1 is in d1.x
+	    d1.yz = min(d1.yz, d2.yz); // F2 is now not in d2.yz
+	    d1.y = min(d1.y, d1.z); // nor in  d1.z
+	    d1.y = min(d1.y, d2.x); // F2 is in d1.y, we're done.
+	    return sqrt(d1.xy);
+	  }
+	  // END NOISE
+	  
+	  
+	  // Dampen velocity to using gaussian-like function from
+	  // From "A model for real-time on-surface flows" by J.-F. El Hajjar et al
+	  float dampen(float number) {
+	    return exp(-pow(1.0 - number, 4.0) / (0.1));
+	  }
+	  
+	  // Velocity stored in the texture is scaled from 0.0-1.0
+	  // this upscales it to -1.0-1.0
+	  vec2 unscaleVelocity(vec2 v) {
+	    return v;
+	    return clamp((v - 0.5) * 2.0, -1.0, 1.0);
+	  }
+	  
+	  // Converts -1.0-1.0 to 0.0-1.0
+	  vec2 scaleVelocity(vec2 v) {
+	    return v;
+	    return clamp(v / 2.0 + 0.5, 0.0, 1.0);
+	  }
+	  
+	  // Calculates the new velocity for a given pixel
+	  // The result vectors are mapped from -1.0-1.0 to 0.0-1.0
+	  vec2 velocity(vec2 pt, vec2 ptDelta) {
+	    vec4 lastSim = texture2D(waterSimulation, pt);
+	    
+	    // Density * volume
+	    // density of water = 1 g/cm³
+	    // Need to make it relative to cell size
+	    float mass = lastSim.z;
+	    // Assuming down is -y
+	    // In CM/S^2 980.665
+	    vec2 gravity = vec2(0.0, -980.0);
+	    
+	    vec2 acceleration = gravity/mass;
+	    
+	    vec2 newVelocity = unscaleVelocity(lastSim.xy) + acceleration * dampen(mass) * deltaTime;
+	    
+	    // The paper seems to say it should be sqrt(2.0) * ptDelta, but that doesn't work...
+	    vec2 maxDisplacement = sqrt(2.0 * ptDelta);
+	    // // vec2 maxDisplacement = sqrt(2.0) * ptDelta;
+	    newVelocity =clamp(newVelocity, -maxDisplacement, maxDisplacement);
+	    
+	    return scaleVelocity(newVelocity);
+	  }
+	  
+	  // Calculates the contribution to the current cell's volume
+	  // by examining all adjacent cells.
+	  // Parameters are the current point and the delta between points
+	  float calcluateNewVolume(vec2 pt, vec2 ptDelta) {
+	    // Adapted from A model for real-time on-surface flows by J.-F. El Hajjar et al 
+	    
+	    //Calculate the texture point for the current cell
+	    vec2 ptC = pt;
+	    //Use the point to calculate its velocity
+	    vec2 v = unscaleVelocity(velocity(ptC, ptDelta));
+	    // Find the cell's volume contribution to the pt cell
+	    float newVolume = (1.0 - abs(v.x)) * (1.0 - abs(v.y)) * texture2D(waterSimulation, pt).z;
+	    // Repeat for every adjacent cell
+	    
+	    ptC = vec2(max(pt.x - ptDelta.x, 0.0), min(pt.y + ptDelta.y, 1.0));
+	    v = unscaleVelocity(velocity(ptC, ptDelta));
+	    newVolume += max(0.0, v.x) * abs(min(0.0, v.y)) * texture2D(waterSimulation, ptC).z;
+	    
+	    ptC = vec2(pt.x, min(pt.y + ptDelta.y, 1.0));
+	    v = unscaleVelocity(velocity(ptC, ptDelta));
+	    newVolume += (1.0 - abs(v.x)) * abs(min(0.0, v.y)) * texture2D(waterSimulation, ptC).z;
+	    
+	    ptC = vec2(min(pt.x + ptDelta.x, 1.0), min(pt.y + ptDelta.y, 1.0));
+	    v = unscaleVelocity(velocity(ptC, ptDelta));
+	    newVolume += abs(min(0.0, v.x))* abs(min(0.0, v.y)) * texture2D(waterSimulation, ptC).z;
+	    
+	    ptC = vec2(max(pt.x - ptDelta.x, 0.0), pt.y);
+	    v = unscaleVelocity(velocity(ptC, ptDelta));
+	    newVolume += max(0.0, v.x) * (1.0 - abs(v.y)) * texture2D(waterSimulation, ptC).z;
+	    
+	    ptC = vec2(min(pt.x + ptDelta.x, 1.0), pt.y);
+	    v = unscaleVelocity(velocity(ptC, ptDelta));
+	    newVolume += abs(min(0.0, v.x)) * (1.0 - abs(v.y)) * texture2D(waterSimulation, ptC).z;
+	    
+	    ptC = vec2(max(pt.x - ptDelta.x, 0.0), max(pt.y - ptDelta.y, 0.0));
+	    v = unscaleVelocity(velocity(ptC, ptDelta));
+	    newVolume += max(0.0, v.x) * max(0.0, v.y) * texture2D(waterSimulation, ptC).z;
+	    
+	    ptC = vec2(pt.x, max(pt.y - ptDelta.y, 0.0));
+	    v = unscaleVelocity(velocity(ptC, ptDelta));
+	    newVolume += (1.0 - abs(v.x)) * max(0.0, v.y) * texture2D(waterSimulation, ptC).z;
+	    
+	    ptC = vec2(min(pt.x + ptDelta.x, 1.0), max(pt.y - ptDelta.y, 0.0));
+	    v = unscaleVelocity(velocity(ptC, ptDelta));
+	    newVolume += abs(min(0.0, v.x)) * max(0.0, v.y) * texture2D(waterSimulation, ptC).z;
+	    
+	    // Add a small amount of volume to simulate condensation
+	    // Need to turn time into seconds
+	    // newVolume += snoise(pt + (time * 0.001)) * (deltaTime * 0.001) * condensationRate;
+	    // Add condensation
+	    if (addWater) {
+	      vec2 noise = cellular(pt / ptDelta * 0.1 + time);
+	      // Scale the amount by height so the top gets more and the bottom less
+	      newVolume += (noise.y - noise.x) * pt.y;
+	    }
+	    // newVolume += deltaTime * 0.1;
+	    
+	    return newVolume;
+	  }
+	  
+	  void main() {
+	    // The current cell on the texture
+	    vec2 point = vUV;
+	    // The amount you need to add or subtract from the current point
+	    // to get to an adjacent point
+	    vec2 pointDelta = vec2(1.0/textureSize);
+	    
+	    // Update the velocity and volume
+	    // TO DO: calculate velocity and volume on septate passes
+	    gl_FragColor = vec4(velocity(point, pointDelta), calcluateNewVolume(point, pointDelta), 1.0);
+	   }
+	</script>
+	
+	<script id="renderCondensationFS" type="x-shader/x-fragment">
+	  precision mediump float;
+
+	  uniform vec2 textureSize; //The width and height of the texture
+	  // x = velocity x
+	  // y = velocity y
+	  // z = volume of water in grams
+	  uniform sampler2D waterSimulation;
+	  
+	  varying vec2 vUV;
+	  
+	  void main() {
+	    // The current cell on the texture
+	    vec2 point = vUV;
+	    // The amount you need to add or subtract from the current point
+	    // to get to an adjacent point
+	    vec2 pointDelta = vec2(1.0/textureSize);
+	    
+	    // Update the velocity and volume
+	    // TO DO: calculate velocity and volume on septate passes
+	    gl_FragColor = vec4(vec3(texture2D(waterSimulation, vUV).z), 1.0);
+	    // if (texture2D(waterSimulation, vUV).x > 0.0) {
+	    //   gl_FragColor = vec4(1.0, 1.0, 0.0, 1.0);
+	    // }
+	    // if (texture2D(waterSimulation, vUV).y == 0.0) {
+	    //   gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);
+	    // }
+	    // if (texture2D(waterSimulation, vUV).y == 1.0) {
+	    //   gl_FragColor = vec4(1.0, 1.0, 0.0, 1.0);
+	    // }
+	    // if (texture2D(waterSimulation, vUV).x != 0.5) {
+	    //   gl_FragColor = vec4(0.0, 1.0, 1.0, 1.0);
+	    // }
+	   }
+	</script>
 
 	<script>
 
 		// Load shaders
 		var vs = document.getElementById( 'vertexShader' ).textContent;
-      	var fs = document.getElementById( 'fragmentShader' ).textContent;
+		var passthroughVS = document.getElementById( 'passthroughVS' ).textContent;
+  	var fs = document.getElementById( 'fragmentShader' ).textContent;
+  	var simulateCondensationFS = document.getElementById('simulateCondensationFS').textContent;
+  	var renderCondensationFS = document.getElementById('renderCondensationFS').textContent;
 
 		// Declare variables
 		var container;
 		var camera, scene, renderer; // Camera scene
 		var controls; // Camera controller
+		var loader = new THREE.JSONLoader();
 
 		// Skybox
 		var skyMesh, cubeMap;
@@ -182,7 +441,18 @@
 
 		// GUI
 		var gui = new dat.GUI( { width: 350 } );
-		// 
+		
+		// Condensation
+		var waterBufferMaterial;
+		var sceneCondensationMaterial;
+		var condensationResX = 128;
+		var condensationResY = 128;
+		var condensationBufferScene;
+		var condensationFBO_B;
+		var condensationFBO_A;
+		var orthoCamera;
+		var addingWater = true;
+		
 		init();
 		animate();
 
@@ -227,6 +497,9 @@
 			'negz.jpg'
 				] );
 			
+			// Condensation shader
+			initCondensation();
+			
 			// Uniform
 			var uniforms_sb = {"tCube": {type:"t",value:cubeMap}};
 			
@@ -243,12 +516,7 @@
 			// Mesh
 			skyMesh = new THREE.Mesh(geometry_sb,material_sb);
 			scene.add(skyMesh);
-			
-			// Glass 
-			//texture1 = new THREE.TextureLoader().load( 'angus.jpg' );
-			//texture1 = createDataTexture();
-			
-			/*
+
 			var uniforms = {
 				tCube: {type: "t", value: cubeMap},
 				index1: {type:"f", value:options.index1},
@@ -266,11 +534,36 @@
 			//var material = new THREE.MeshStandardMaterial({color:0x2194ce});
 			mesh = new THREE.Mesh(geometry, material);
 			scene.add(mesh);
-			*/
 			
-			// Object Loading
-			var loader = new THREE.JSONLoader();
-			loader.load( 'json/glass.json', processBlenderObject );
+			uniforms = {
+				index1: {type:"f", value:options.index1},
+				index2: {type:"f",value:options.index2},
+				
+				tCube: {type: "t", value: cubeMap},
+				t1: { type: "t", value: texture1  },
+				fresPower: {type:"f",value:options.fresPower},
+			};
+
+			material = new THREE.RawShaderMaterial( {
+				uniforms: uniforms,
+				vertexShader: vs,
+				fragmentShader: fs,	
+			} );
+
+			// glassMesh = new THREE.Mesh( useGeometry, material );
+			// gui.add( options, "index1", 1,5).onChange(function(value){
+			// 	glassMesh.material.uniforms.index1.value = value;
+			// });
+			// gui.add( options, "index2", 1,5).onChange(function(value){
+			// 	glassMesh.material.uniforms.index2.value = value;
+			// });
+			// gui.add( options, "fresPower", 1,5).onChange(function(value){
+			// 	glassMesh.material.uniforms.index2.value = value;
+			// });
+
+			processBlenderObject('json/glass.json', material, new THREE.Vector3(0, -1.5, 0), new THREE.Vector3(0.012,0.012,0.012));
+			
+			processBlenderObject('json/cupnoodle.json', sceneCondensationMaterial, new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
 
 			// Setup renderer
 			renderer = new THREE.WebGLRenderer();
@@ -280,77 +573,21 @@
 
 			window.addEventListener( 'resize', onWindowResize, false );
 		}
-
-
-		// Process cup
-		function processBlenderObject (geometry,materials) {
+		
+		function processBlenderObject(path, material, position, scale) {
+			loader.load( path, function(geometry, materials) {
 				console.log(geometry);
 				console.log(materials);
-				//var useGeometry = new THREE.BufferGeometry().fromGeometry( geometry );
-				var useGeometry = geometry;
 
-				var uniforms = {
-					index1: {type:"f", value:options.index1},
-					index2: {type:"f",value:options.index2},
-					
-					tCube: {type: "t", value: cubeMap},
-					t1: { type: "t", value: texture1  },
-					fresPower: {type:"f",value:options.fresPower},
-				};
-
-				var material = new THREE.RawShaderMaterial( {
-					uniforms: uniforms,
-					vertexShader: vs,
-					fragmentShader: fs,	
-				} );
-
-				glassMesh = new THREE.Mesh( useGeometry, material );
-				gui.add( options, "index1", 1,5).onChange(function(value){
-					glassMesh.material.uniforms.index1.value = value;
-				});
-				gui.add( options, "index2", 1,5).onChange(function(value){
-					glassMesh.material.uniforms.index2.value = value;
-				});
-				gui.add( options, "fresPower", 1,5).onChange(function(value){
-					glassMesh.material.uniforms.index2.value = value;
-				});
-
+				mesh = new THREE.Mesh( geometry, material );
 
 				//positioning and scaling blender obj so that it's in the center of the screen
-				glassMesh.position.set( 0, -1.5, 0 );
-				glassMesh.scale.set(0.012,0.012,0.012);
- 
-				scene.add( glassMesh );
-
-		}
-		
-		// Process lid
-		function processLidObject(geometry,materials){
-		//var useGeometry = new THREE.BufferGeometry().fromGeometry( geometry );
-				var useGeometry = geometry;
-
-				var uniforms = {
-					t1: { type: "t", value: texture1  },
-				};
-
-				var material = new THREE.RawShaderMaterial( {
-					uniforms: uniforms,
-					vertexShader: vs,
-					fragmentShader: fs,	
-				} );
-
-
-				mesh = new THREE.Mesh( useGeometry, material );
-
-				mesh.position.set( 0, -1.5, 0 );
-				//positioning and scaling blender obj so that it's in the center of the screen
+				mesh.position.copy(position);
+				mesh.scale.copy(scale);
 
 				scene.add( mesh );
-
-
+			} );
 		}
-		
-
 
 		// Resize the renderer on window change
 		function onWindowResize( event ) {
@@ -371,34 +608,107 @@
 
 		function render() {
 			camera.lookAt( scene.position );
+			renderCondensation();
 			renderer.render( scene, camera );
 		}
 
-		// Creates textures dynamically
-		function createDataTexture() {
+		// Prepares the required condensation shaders
+		// Returns the material to be added to the main scene
+		function initCondensation() {
+			orthoCamera = new THREE.OrthographicCamera( window.innerWidth / -2, window.innerWidth / 2, window.innerHeight / 2, window.innerHeight / -2, 0.1, 1000 );
+			orthoCamera.position.z = 0.2;
+			
+			//Create off-screen buffer scene
+			condensationBufferScene = new THREE.Scene();
+			
+			//Create 2 buffer textures
+			condensationFBO_A = new THREE.WebGLRenderTarget( condensationResX, condensationResY, { minFilter: THREE.LinearFilter, magFilter: THREE.NearestFilter});
+			condensationFBO_B = new THREE.WebGLRenderTarget( condensationResX, condensationResY, { minFilter: THREE.LinearFilter, magFilter: THREE.NearestFilter} );
+			
+			var dataTexture = createWaterTexture();
 
-			// create a buffer with color data
+			waterBufferMaterial = new THREE.RawShaderMaterial( {
+			  uniforms: {
+			    time: { type: "f", value: performance.now() },
+			    deltaTime: { type: "f", value: 0.0 },
+			    waterSimulation: { type: "t", value: dataTexture },
+			    condensationRate: { type: 'f', value: 0.01 },
+			    addWater: { type: 'b', value: addingWater },
+			    textureSize : {type: "v2", value: new THREE.Vector2( condensationResX, condensationResY )}  //shader doesn't have access to these global variables, so pass in the resolution
+			  },
+			    vertexShader: passthroughVS,
+			    fragmentShader: simulateCondensationFS
+			} );
 
-			var resX = 25;
-			var resY = 25;
+			//we can use a Three.js Plane Geometry along with the orthographic camera to create a "full screen quad"
+			var plane = new THREE.PlaneBufferGeometry( window.innerWidth, window.innerHeight )
 
-			var size = resX * resY;
-			var data = new Uint8Array( 4 * size );
+			var bufferObject = new THREE.Mesh( plane, waterBufferMaterial );
+			condensationBufferScene.add(bufferObject);
+			
+			sceneCondensationMaterial = new THREE.RawShaderMaterial( {
+			  uniforms: {
+			    waterSimulation: { type: "t", value: dataTexture },
+			    textureSize : {type: "v2", value: new THREE.Vector2( condensationResX, condensationResY )}
+			  },
+			    vertexShader: passthroughVS,
+			    fragmentShader: renderCondensationFS
+			} );
+			
+			return sceneCondensationMaterial;
+		}
+		
+		// Does all post-processing and shader passes required for the condensation effect
+		// before rendering the main scene
+		function renderCondensation() {
+			//Draw to the active offscreen buffer (whatever is stored in condensationFBO_B), that is the output of this rendering pass will be stored in the texture associated with condensationFBO_B
+			renderer.render(condensationBufferScene, orthoCamera, condensationFBO_B);
 
-			for ( var i = 0; i < size; i++ ) {	
-				var stride = i * 4;
+			// Give the result of the simulation to the main scene
+			sceneCondensationMaterial.uniforms.waterSimulation.value = condensationFBO_B.texture;
 
-				data[ stride ] = Math.random() * 255;
-				data[ stride + 1 ] = Math.random() * 255;;
-				data[ stride + 2 ] = Math.random() * 255;;
-				data[ stride + 3 ] = 255;
+			//Now prepare for the next cycle by swapping condensationFBO_A and condensationFBO_B, so that the previous frame's *output* becomes the next frame's *input*
+			var t = condensationFBO_A;
+			condensationFBO_A = condensationFBO_B;
+			condensationFBO_B = t;
+			
+			// Update uniforms
+			var time = performance.now() * 0.001;
+			waterBufferMaterial.uniforms.deltaTime.value = time - waterBufferMaterial.uniforms.time.value;
+			waterBufferMaterial.uniforms.time.value = time;
+			waterBufferMaterial.uniforms.addWater.value = addingWater;
+			if (addingWater) {
+			  // We want to pulse this for only one frame
+			  addingWater = false;
 			}
+			// Reassign textures
+			waterBufferMaterial.uniforms.waterSimulation.value = condensationFBO_A.texture;
+		}
+		
+		// Creates the texture to be used for water simulation
+		function createWaterTexture() {
+		  // create a buffer with color data
+		  
+		  var size = condensationResX * condensationResY;
+		  var data = new Uint8Array( 4 * size );
+
+		  for ( var i = 0; i < size; i++ ) {
+		    var stride = i * 4;
+		    
+		    // Randomly choose channels
+		    data[ stride ] = 0;
+		    data[ stride + 1 ] = 0;
+		    data[ stride + 2 ] = 0;
+		    data[ stride + 3 ] = 0;
+		  }
 
 
-			var texture = new THREE.DataTexture( data, resX, resY, THREE.RGBAFormat );
-			texture.needsUpdate = true; // just a weird thing that Three.js wants you to do after you set the data for the texture
+		  // used the buffer to create a DataTexture
+		  var texture = new THREE.DataTexture( data, condensationResX, condensationResY, THREE.RGBAFormat );
+		  
+		  texture.needsUpdate = true; // just a weird thing that Three.js wants you to do after you set the data for the texture
 
-			return texture;
+		  return texture;
 		}
 
 
