@@ -28,25 +28,89 @@
 		<script src="js/three.js"></script>
 		<script src="js/orbit-controls.js"></script>
 		<script src="js/OBJLoader.js"></script>
+		<script src="js/dat.gui.js"></script>
 
-  <script id="vertexShader" type="x-shader/x-vertex">
-
+		
+		  <script id="skyboxVS" type="x-shader/x-vertex">
 
 	uniform mat4 modelMatrix;
 	uniform mat4 viewMatrix;
       	uniform mat4 projectionMatrix;
 
      	attribute vec3 position; 
-     	attribute vec2 uv;
 
-	varying vec2 vUV;
-
+	varying vec3 vWorldPosition;
+	
 	void main() {
 
-        	vec4 position = viewMatrix * modelMatrix * vec4(position, 1.0);
-	   	vUV = uv; 
-        	gl_Position = projectionMatrix * position; 
+		vec4 worldPosition = modelMatrix * vec4( position, 1.0 );
+		vWorldPosition = worldPosition.xyz;
+
+		vec4 p = viewMatrix * modelMatrix * vec4(position, 1.0);
+		gl_Position = projectionMatrix * p;
+		
      	 }
+
+    </script>
+
+
+    <script id="skyboxFS" type="x-shader/x-fragment">
+
+		precision mediump float;
+		
+		uniform samplerCube tCube;
+		varying vec3 vWorldPosition;
+
+		void main() {
+
+			gl_FragColor = textureCube( tCube, vec3(  vWorldPosition ) );
+		}
+	
+    </script>
+
+
+  <script id="vertexShader" type="x-shader/x-vertex">
+
+	uniform mat3 normalMatrix;
+	uniform mat4 modelMatrix;
+	uniform mat4 viewMatrix;
+    uniform mat4 projectionMatrix;
+	uniform vec3 cameraPosition;
+
+	attribute vec4 vertex;
+	attribute vec3 normal;
+    attribute vec3 position; 
+    attribute vec2 uv;
+
+	varying vec3 worldSpaceNormal;
+	varying vec3 worldSpaceEyeVector;
+	varying mat4 inverseModelMatrix;
+	varying vec2 vUV;
+	varying vec3 vReflection; // Reflection index
+	varying vec3 vRefraction; // Refraction index
+	varying float vFresnel; // Fresnel reflection power
+
+	void main() {
+		float rAir = 1.0; // refraction index of air
+		float rGlass = 1.51714; // refraction index of glass
+		float rIndex = ((rAir - rGlass) * (rAir - rGlass))/ ((rAir + rGlass) * (rAir + rGlass)); // refraction index
+
+		vUV = uv; 
+		vec4 worldPosition = modelMatrix * vec4( position, 1.0 ); // world position
+        vec4 mvPosition = viewMatrix * modelMatrix * vec4(position, 1.0); // model view position
+		vec3 worldNormal = normalize( mat3( modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz ) * normal ); // world space normal
+		
+		vec3 incidentNormal = normalize(worldPosition.xyz - cameraPosition.xyz);
+
+		vRefraction = refract(incidentNormal,worldNormal,(rAir/rGlass));
+		vReflection = reflect(incidentNormal,worldNormal);
+		// Schlick's approximation of fresnel
+		//vReflectionFactor = mFresnelBias + mFresnelScale * pow( 1.0 + dot( normalize( I ), worldNormal ), mFresnelPower);
+
+		vFresnel = rIndex + (1.0 - rIndex) * pow((1.0-dot(-incidentNormal,worldNormal)),5.0);
+		
+        gl_Position = projectionMatrix * mvPosition; 
+    }
 
     </script>
 
@@ -54,13 +118,37 @@
     <script id="fragmentShader" type="x-shader/x-fragment">
 
 	precision mediump float;
-	uniform sampler2D t1;
+	uniform samplerCube tCube;
+	uniform float fresPower;
+	uniform float fresBias;
+	
 	varying vec2 vUV;
+	varying vec3 vReflection;
+	varying vec3 vRefraction;
+	varying float vFresnel;
 
+	float fresnelApprox(vec3 incident, vec3 normal)
+	{
+		float bias = fresBias;
+		float power = fresPower;
+		float scale = 1.0 - bias;
+		return bias + pow(1.0-dot(incident,normal),power)*scale; 
+	}
+	
+	
+	
       	void main() {
-		//vec4 c1 = texture2D(t1, vUV);
-		//vec4 c2 = vec4(0.0,1.0,0.0,1.0);
-        	gl_FragColor = vec4(1.0,1.0,1.0, 1.0);//c1; //, c2, 0.5);
+		//normalize vectors
+		// find reflection
+		//vec3 reflectVec = normalize(reflect(incident,normal));
+		//vec3 reflectColor = textureCube(tCube,reflVec).xyz;
+		// find refraction
+		
+
+		vec3 reflectionColor = textureCube(tCube, vec3(vRefraction)).xyz;
+		
+		vec3 refractionColor = textureCube(tCube, vec3(vReflection)).xyz;
+        gl_FragColor = vec4(mix(refractionColor, reflectionColor, vFresnel),1.0);//c1; //, c2, 0.5);
 	}
 
 	</script>
@@ -74,24 +162,123 @@
 
 		// Declare variables
 		var container;
-		var camera, scene, renderer;
+		var camera, scene, renderer; // Camera scene
+		var controls; // Camera controller
 
+		// Skybox
+		var skyMesh, cubeMap;
+		
 		// Load meshes and textures
 		var mesh;
 		var texture1;
 
+		// GUI
+		var gui = new dat.GUI( { width: 350 } );
 		// 
 		init();
 		animate();
 
+		// Initialize function
+		function init() {
+
+			// Initialize scene
+			container = document.getElementById( 'container' );
+
+			camera = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 1, 2000 );
+			camera.position.set( 0, 0, 5 );
+			
+			controls = new THREE.OrbitControls( camera );
+			controls.update();
+
+			scene = new THREE.Scene();
+			scene.fog = new THREE.FogExp2( 0x000000, 0.035 );
+
+			options = {
+				index1: 1.0, // Index of air (vacuum)
+				index2: 1.51714, // Index of glass
+				fresBias: 0.15,
+				fresPower: 2.0,
+				};
+			
+			// -- Skybox
+			//	Skybox Shaders
+			var sb_vs = document.getElementById( 'skyboxVS' ).textContent;
+			var sb_fs = document.getElementById( 'skyboxFS' ).textContent;
+			
+			// Geometry
+			var geometry_sb = new THREE.BoxGeometry(2000,2000,2000);
+			
+			cubeMap = new THREE.CubeTextureLoader()
+				.setPath("./cubemap/")
+				.load( [
+			'posx.jpg',
+			'negx.jpg',
+			'posy.jpg',
+			'negy.jpg',
+			'posz.jpg',
+			'negz.jpg'
+				] );
+			
+			// Uniform
+			var uniforms_sb = {"tCube": {type:"t",value:cubeMap}};
+			
+			// Material
+			var material_sb = new THREE.RawShaderMaterial({
+					uniforms:uniforms_sb,
+					vertexShader:sb_vs,
+					fragmentShader:sb_fs
+				});
+				
+			material_sb.depthWrite = false;
+			material_sb.side = THREE.BackSide;
+			
+			// Mesh
+			skyMesh = new THREE.Mesh(geometry_sb,material_sb);
+			scene.add(skyMesh);
+			
+			// Glass 
+			//texture1 = new THREE.TextureLoader().load( 'angus.jpg' );
+			//texture1 = createDataTexture();
+
+			var uniforms = {
+				tCube: {type: "t", value: cubeMap},
+				fresBias: {type:"f",value:options.fresBias},
+				fresPower: {type:"f",value:options.fresPower},
+			}
+			var geometry = new THREE.SphereGeometry(0.31,32,32)
+			var material = new THREE.RawShaderMaterial({
+									uniforms: uniforms,
+					vertexShader: vs,
+					fragmentShader: fs,
+					});
+			
+			//var material = new THREE.MeshStandardMaterial({color:0x2194ce});
+			mesh = new THREE.Mesh(geometry, material);
+			scene.add(mesh);
+			
+			// Object Loading
+			var loader = new THREE.JSONLoader();
+			loader.load( 'json/glass.json', processBlenderObject );
+
+			// Setup renderer
+			renderer = new THREE.WebGLRenderer();
+			renderer.setPixelRatio( window.devicePixelRatio );
+			renderer.setSize( window.innerWidth, window.innerHeight );
+			container.appendChild( renderer.domElement );
+
+			window.addEventListener( 'resize', onWindowResize, false );
+		}
+
 
 		// Process cup
-		function processBlenderObject (geometry, materials) {
-
+		function processBlenderObject (geometry,materials) {
+				console.log(geometry);
+				console.log(materials);
 				//var useGeometry = new THREE.BufferGeometry().fromGeometry( geometry );
 				var useGeometry = geometry;
 
 				var uniforms = {
+					tCube: {type: "t", value: cubeMap},
 					t1: { type: "t", value: texture1  },
 				};
 
@@ -106,14 +293,15 @@
 
 				//positioning and scaling blender obj so that it's in the center of the screen
 				mesh.position.set( 0, -1.5, 0 );
-
+				mesh.scale.set(0.012,0.012,0.012);
+ 
 				scene.add( mesh );
 
 
 		}
 		
 		// Process lid
-		function processLidObject(geometry,materials
+		function processLidObject(geometry,materials){
 		//var useGeometry = new THREE.BufferGeometry().fromGeometry( geometry );
 				var useGeometry = geometry;
 
@@ -137,35 +325,10 @@
 
 
 		}
-
-		function init() {
-
-			container = document.getElementById( 'container' );
-
-			camera = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 1, 2000 );
-				var controls = new THREE.OrbitControls( camera );
-				camera.position.set( 0, 0, 5 );
-
-			controls.update();
-
-			scene = new THREE.Scene();
-			scene.fog = new THREE.FogExp2( 0x000000, 0.035 );
+		
 
 
-			texture1 = new THREE.TextureLoader().load( 'myImage.jpg' );
-			//texture1 = createDataTexture();
-
-			var loader = new THREE.JSONLoader();
-			loader.load( 'json/cupnoodle.json', processBlenderObject );
-	
-			renderer = new THREE.WebGLRenderer();
-			renderer.setPixelRatio( window.devicePixelRatio );
-			renderer.setSize( window.innerWidth, window.innerHeight );
-			container.appendChild( renderer.domElement );
-
-			window.addEventListener( 'resize', onWindowResize, false );
-		}
-
+		// Resize the renderer on window change
 		function onWindowResize( event ) {
 
 			renderer.setSize( window.innerWidth, window.innerHeight );
@@ -175,6 +338,7 @@
 		}
 
 
+		// Animate, calls Render()
 		function animate() {
 
 			requestAnimationFrame( animate );
@@ -186,6 +350,7 @@
 			renderer.render( scene, camera );
 		}
 
+		// Creates textures dynamically
 		function createDataTexture() {
 
 			// create a buffer with color data
@@ -196,7 +361,7 @@
 			var size = resX * resY;
 			var data = new Uint8Array( 4 * size );
 
-			for ( var i = 0; i < size; i++ ) {
+			for ( var i = 0; i < size; i++ ) {	
 				var stride = i * 4;
 
 				data[ stride ] = Math.random() * 255;
