@@ -82,32 +82,29 @@
     attribute vec3 position; 
     attribute vec2 uv;
 
-	varying vec3 worldSpaceNormal;
-	varying vec3 worldSpaceEyeVector;
-	varying mat4 inverseModelMatrix;
+	varying vec3 worldNormal;
+	varying vec3 incident;
 	varying vec2 vUV;
-	varying vec3 vReflection; // Reflection index
-	varying vec3 vRefraction; // Refraction index
-	varying float vFresnel; // Fresnel reflection power
-
+	
 	void main() {
-		float rAir = 1.0; // refraction index of air
-		float rGlass = 1.51714; // refraction index of glass
-		float rIndex = ((rAir - rGlass) * (rAir - rGlass))/ ((rAir + rGlass) * (rAir + rGlass)); // refraction index
+
 
 		vUV = uv; 
 		vec4 worldPosition = modelMatrix * vec4( position, 1.0 ); // world position
-        vec4 mvPosition = viewMatrix * modelMatrix * vec4(position, 1.0); // model view position
-		vec3 worldNormal = normalize( mat3( modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz ) * normal ); // world space normal
+		worldNormal = normalize( mat3( modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz ) * normal ); // world space normal
+		incident = worldPosition.xyz - cameraPosition.xyz;
 		
-		vec3 incidentNormal = normalize(worldPosition.xyz - cameraPosition.xyz);
-
+        vec4 mvPosition = viewMatrix * modelMatrix * vec4(position, 1.0); // model view position
+		
+		
+		/*
 		vRefraction = refract(incidentNormal,worldNormal,(rAir/rGlass));
 		vReflection = reflect(incidentNormal,worldNormal);
 		// Schlick's approximation of fresnel
 		//vReflectionFactor = mFresnelBias + mFresnelScale * pow( 1.0 + dot( normalize( I ), worldNormal ), mFresnelPower);
 
 		vFresnel = rIndex + (1.0 - rIndex) * pow((1.0-dot(-incidentNormal,worldNormal)),5.0);
+		*/
 		
         gl_Position = projectionMatrix * mvPosition; 
     }
@@ -119,36 +116,46 @@
 
 	precision mediump float;
 	uniform samplerCube tCube;
+	uniform float index1;
+	uniform float index2;
 	uniform float fresPower;
 	uniform float fresBias;
 	
 	varying vec2 vUV;
-	varying vec3 vReflection;
-	varying vec3 vRefraction;
-	varying float vFresnel;
+	varying vec3 worldNormal;
+	varying vec3 incident;
 
-	float fresnelApprox(vec3 incident, vec3 normal)
-	{
-		float bias = fresBias;
-		float power = fresPower;
-		float scale = 1.0 - bias;
-		return bias + pow(1.0-dot(incident,normal),power)*scale; 
-	}
+
+	// Schlick's approximation of fresnel
+	// fresnelAngle = index + (1-cos(fresnelAngle))^5 * (1-index)
+		float fresnelApprox(vec3 incident, vec3 normal)
+		{
+			float bias = ((index1 - index2)*(index1-index2))/((index1 + index2)*(index1+index2));
+			float power = fresPower;
+			float scale = 1.0 - bias;
+			
+			return bias + pow(1.0-dot(incident,normal),power)*scale; 
+		}
 	
 	
 	
       	void main() {
 		//normalize vectors
+		vec3 normal = normalize(worldNormal);
+		vec3 incidentN = normalize(incident);
+		
 		// find reflection
-		//vec3 reflectVec = normalize(reflect(incident,normal));
-		//vec3 reflectColor = textureCube(tCube,reflVec).xyz;
+		vec3 reflectV = normalize(reflect(incidentN,normal));
+		vec3 reflectColor = textureCube(tCube,reflectV).xyz;
 		// find refraction
-		
+		vec3 refractColor;
+		refractColor.x = textureCube(tCube, refract(incidentN, normal, index2)).x;
+		refractColor.y = textureCube(tCube, refract(incidentN, normal, index2-0.02)).y;
+		refractColor.z = textureCube(tCube, refract(incidentN, normal, index2-0.04)).z;
 
-		vec3 reflectionColor = textureCube(tCube, vec3(vRefraction)).xyz;
+		float fresnelEffect = fresnelApprox(-incidentN, normal);
 		
-		vec3 refractionColor = textureCube(tCube, vec3(vReflection)).xyz;
-        gl_FragColor = vec4(mix(refractionColor, reflectionColor, vFresnel),1.0);//c1; //, c2, 0.5);
+        gl_FragColor = vec4(mix(refractColor, reflectColor, fresnelEffect),1.0);//c1; //, c2, 0.5);
 	}
 
 	</script>
@@ -170,6 +177,7 @@
 		
 		// Load meshes and textures
 		var mesh;
+		var glassMesh;
 		var texture1;
 
 		// GUI
@@ -239,15 +247,18 @@
 			// Glass 
 			//texture1 = new THREE.TextureLoader().load( 'angus.jpg' );
 			//texture1 = createDataTexture();
-
+			
+			/*
 			var uniforms = {
 				tCube: {type: "t", value: cubeMap},
+				index1: {type:"f", value:options.index1},
+				index2: {type:"f",value:options.index2},
 				fresBias: {type:"f",value:options.fresBias},
 				fresPower: {type:"f",value:options.fresPower},
 			}
 			var geometry = new THREE.SphereGeometry(0.31,32,32)
 			var material = new THREE.RawShaderMaterial({
-									uniforms: uniforms,
+					uniforms: uniforms,
 					vertexShader: vs,
 					fragmentShader: fs,
 					});
@@ -255,6 +266,7 @@
 			//var material = new THREE.MeshStandardMaterial({color:0x2194ce});
 			mesh = new THREE.Mesh(geometry, material);
 			scene.add(mesh);
+			*/
 			
 			// Object Loading
 			var loader = new THREE.JSONLoader();
@@ -278,8 +290,12 @@
 				var useGeometry = geometry;
 
 				var uniforms = {
+					index1: {type:"f", value:options.index1},
+					index2: {type:"f",value:options.index2},
+					
 					tCube: {type: "t", value: cubeMap},
 					t1: { type: "t", value: texture1  },
+					fresPower: {type:"f",value:options.fresPower},
 				};
 
 				var material = new THREE.RawShaderMaterial( {
@@ -288,15 +304,23 @@
 					fragmentShader: fs,	
 				} );
 
+				glassMesh = new THREE.Mesh( useGeometry, material );
+				gui.add( options, "index1", 1,5).onChange(function(value){
+					glassMesh.material.uniforms.index1.value = value;
+				});
+				gui.add( options, "index2", 1,5).onChange(function(value){
+					glassMesh.material.uniforms.index2.value = value;
+				});
+				gui.add( options, "fresPower", 1,5).onChange(function(value){
+					glassMesh.material.uniforms.index2.value = value;
+				});
 
-				mesh = new THREE.Mesh( useGeometry, material );
 
 				//positioning and scaling blender obj so that it's in the center of the screen
-				mesh.position.set( 0, -1.5, 0 );
-				mesh.scale.set(0.012,0.012,0.012);
+				glassMesh.position.set( 0, -1.5, 0 );
+				glassMesh.scale.set(0.012,0.012,0.012);
  
-				scene.add( mesh );
-
+				scene.add( glassMesh );
 
 		}
 		
