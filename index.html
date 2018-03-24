@@ -768,8 +768,16 @@
 			conMesh.position.set(0.0, 1.5, 0.0);
 			scene.add(conMesh);
 			
+
 			processBlenderObject('json/spaghettilidfront.json', sceneCondensationMaterial, new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
-			processBlenderObject('json/spaghettilidback.json', new THREE.MeshStandardMaterial, new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
+			
+			// Outer Lid
+			var textureLidOuter = new THREE.TextureLoader().load("textures/spaghettifront_.png");
+			var materialsOuter = new THREE.MeshBasicMaterial({
+					map:textureLidOuter,
+				});
+			
+			processBlenderObject('json/spaghettilidback.json', materialsOuter, new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
 			// Cup
 			var textureCup = new THREE.TextureLoader().load("textures/cupnoodlecup.png");
 			var materialsCup = new THREE.MeshBasicMaterial({
