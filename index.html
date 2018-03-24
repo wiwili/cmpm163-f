@@ -380,6 +380,27 @@
 	   }
 	</script>
 	
+	<script id="renderCondensationVS" type="x-shader/x-vertex">
+	  uniform mat4 modelViewMatrix;
+	  uniform mat4 projectionMatrix;
+	  
+	  uniform sampler2D waterSimulation;
+
+	  attribute vec3 position;
+	  attribute vec2 uv;
+	  attribute vec3 normal;
+	  
+	  varying vec2 vUV;
+
+	  void main() {
+	    vUV = uv;
+	    
+	    vec3 displacement = normal * texture2D(waterSimulation, uv).z * 1.0;
+	    
+	    gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 ) + vec4(displacement, 0.0);
+	  }
+	</script>
+	
 	<script id="renderCondensationFS" type="x-shader/x-fragment">
 	  precision mediump float;
 
@@ -424,6 +445,7 @@
   	var fs = document.getElementById( 'fragmentShader' ).textContent;
   	var simulateCondensationFS = document.getElementById('simulateCondensationFS').textContent;
   	var renderCondensationFS = document.getElementById('renderCondensationFS').textContent;
+  	var renderCondensationVS = document.getElementById('renderCondensationVS').textContent;
 
 		// Declare variables
 		var container;
@@ -550,20 +572,25 @@
 				fragmentShader: fs,	
 			} );
 
-			// glassMesh = new THREE.Mesh( useGeometry, material );
-			// gui.add( options, "index1", 1,5).onChange(function(value){
-			// 	glassMesh.material.uniforms.index1.value = value;
-			// });
-			// gui.add( options, "index2", 1,5).onChange(function(value){
-			// 	glassMesh.material.uniforms.index2.value = value;
-			// });
-			// gui.add( options, "fresPower", 1,5).onChange(function(value){
-			// 	glassMesh.material.uniforms.index2.value = value;
-			// });
 
-			processBlenderObject('json/glass.json', material, new THREE.Vector3(0, -1.5, 0), new THREE.Vector3(0.012,0.012,0.012));
+			processBlenderObject('json/glass.json', material, new THREE.Vector3(0, -1.5, 0), new THREE.Vector3(0.012,0.012,0.012), function(glassMesh) {
+				gui.add( options, "index1", 1,5).onChange(function(value){
+					glassMesh.material.uniforms.index1.value = value;
+				});
+				gui.add( options, "index2", 1,5).onChange(function(value){
+					glassMesh.material.uniforms.index2.value = value;
+				});
+				gui.add( options, "fresPower", 1,5).onChange(function(value){
+					glassMesh.material.uniforms.index2.value = value;
+				});
+			});
 			
-			processBlenderObject('json/cupnoodle.json', sceneCondensationMaterial, new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
+			// Condensation testing
+			var conMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 1.0, condensationResX, condensationResY), sceneCondensationMaterial);
+			conMesh.position.set(0.0, 1.5, 0.0);
+			scene.add(conMesh);
+			
+			processBlenderObject('json/cupnoodlelid.json', sceneCondensationMaterial, new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
 
 			// Setup renderer
 			renderer = new THREE.WebGLRenderer();
@@ -574,7 +601,7 @@
 			window.addEventListener( 'resize', onWindowResize, false );
 		}
 		
-		function processBlenderObject(path, material, position, scale) {
+		function processBlenderObject(path, material, position, scale, callback = null) {
 			loader.load( path, function(geometry, materials) {
 				console.log(geometry);
 				console.log(materials);
@@ -586,6 +613,10 @@
 				mesh.scale.copy(scale);
 
 				scene.add( mesh );
+				
+				if (callback != null) {
+					callback(mesh);
+				}
 			} );
 		}
 
@@ -651,7 +682,7 @@
 			    waterSimulation: { type: "t", value: dataTexture },
 			    textureSize : {type: "v2", value: new THREE.Vector2( condensationResX, condensationResY )}
 			  },
-			    vertexShader: passthroughVS,
+			    vertexShader: renderCondensationVS,
 			    fragmentShader: renderCondensationFS
 			} );
 			
