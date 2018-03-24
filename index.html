@@ -69,7 +69,7 @@
     </script>
 
 
-  <script id="vertexShader" type="x-shader/x-vertex">
+  <script id="glassVertexShader" type="x-shader/x-vertex">
 	precision mediump float;
 
 	uniform mat3 normalMatrix;
@@ -107,22 +107,14 @@
 		vec4 L1_cam = viewMatrix * vec4(light1_pos, 1.0);
 		L1 = vec3(normalize(L1_cam - mvPosition).xyz);
 		V = normalize(-position.xyz);
-		/*
-		vRefraction = refract(incidentNormal,worldNormal,(rAir/rGlass));
-		vReflection = reflect(incidentNormal,worldNormal);
-		// Schlick's approximation of fresnel
-		//vReflectionFactor = mFresnelBias + mFresnelScale * pow( 1.0 + dot( normalize( I ), worldNormal ), mFresnelPower);
 
-		vFresnel = rIndex + (1.0 - rIndex) * pow((1.0-dot(-incidentNormal,worldNormal)),5.0);
-		*/
-		
         gl_Position = projectionMatrix * mvPosition; 
     }
 
     </script>
 
 
-    <script id="fragmentShader" type="x-shader/x-fragment">
+    <script id="glassFragmentShader" type="x-shader/x-fragment">
 
 	precision mediump float;
 	uniform samplerCube tCube;
@@ -130,6 +122,8 @@
 	uniform float index2;
 	uniform float fresPower;
 	uniform float fresBias;
+	uniform vec2 resolution;
+
 	
 	uniform vec3 light1_pos;
 	uniform vec3 light1_specular;
@@ -151,7 +145,60 @@
 			return bias + pow(1.0-dot(incident,normal),power)*scale; 
 		}
 	
-	
+	// Hash function
+	vec2 hash2( vec2 p )
+	{
+		// procedural white noise	
+		return fract(sin(vec2(dot(p,vec2(127.1,311.7)),dot(p,vec2(269.5,183.3))))*43758.5453);
+	}
+		
+	vec3 voronoi( in vec2 x )
+	{
+		vec2 n = floor(x);
+		vec2 f = fract(x);
+
+		//----------------------------------
+		// first pass: regular voronoi
+		//----------------------------------
+		vec2 mg, mr;
+		float id;
+
+		float md = 8.0;
+		for( int j=-1; j<=1; j++ )
+		for( int i=-1; i<=1; i++ )
+		{
+			vec2 g = vec2(float(i),float(j));
+			vec2 o = hash2( n + g );
+			vec2 ao = o;
+			vec2 r = g + ao - f;
+			float d = dot(r,r);
+
+			if( d<md )
+			{
+				md = d;
+				mr = r;
+				mg = g;
+				id = o.x+o.y;
+			}
+		}
+
+		//----------------------------------
+		// second pass: distance to borders
+		//----------------------------------
+		md = 8.0;
+		for( int j=-2; j<=2; j++ )
+		for( int i=-2; i<=2; i++ )
+		{
+			vec2 g = mg + vec2(float(i),float(j));
+			vec2 o = hash2( n + g );
+			vec2 r = g + o - f;
+
+			if( dot(mr-r,mr-r)>0.00001 )
+			md = min( md, dot( 0.5*(mr+r), normalize(r-mr) ) );
+		}
+
+		return vec3( length(mr), id, md );
+	}
 	
       	void main() {
 		//normalize vectors
@@ -164,8 +211,8 @@
 		// find refraction
 		vec3 refractColor;
 		refractColor.x = textureCube(tCube, refract(incidentN, normal, index2)).x;
-		refractColor.y = textureCube(tCube, refract(incidentN, normal, index2-0.02)).y;
-		refractColor.z = textureCube(tCube, refract(incidentN, normal, index2-0.04)).z;
+		refractColor.y = textureCube(tCube, refract(incidentN, normal, index2*0.98)).y;
+		refractColor.z = textureCube(tCube, refract(incidentN, normal, index2*0.96)).z;
 		
 		// Fresnel estimate
 		float fresnelEffect = fresnelApprox(-incidentN, normal);	
@@ -173,12 +220,22 @@
 		// Phong lighting
 		// Specular/Diffuse color
 		
+		// Voronoi
+		vec3 c = voronoi( 8.0*(vUV*vec2(2.0,2.0)) );
+		vec3 cellCol =  0.5 + 0.5*cos( c.y*6.2831 + vec3(0.0,1.0,2.0) ); // Color each cell
+		// Border
+		float thickness = smoothstep(0.0, 0.4, c.z);
+		thickness = pow((thickness), 0.25);
+		cellCol *= thickness;
+		
 
-
+		// Mix colors from voronoi with glass reflection
+		vec3 fresCol =  mix(refractColor, reflectColor, fresnelEffect);
+		vec3 finalCol = mix(fresCol, cellCol,0.5);
 		
-		
-		
-        gl_FragColor = vec4(mix(refractColor, reflectColor, fresnelEffect),clamp(fresnelEffect,0.2,1.0));//c1; //, c2, 0.5);
+        gl_FragColor = vec4(finalCol,clamp(fresnelEffect,0.6,1.0));//c1; //, c2, 0.5);
+		//gl_FragColor = vec4(cellCol,1.0);
+		//gl_FragColor = vec4(thickness,thickness,thickness,1.0);
 	}
 
 	</script>
@@ -466,9 +523,9 @@
 	<script>
 
 		// Load shaders
-		var vs = document.getElementById( 'vertexShader' ).textContent;
+		var vs = document.getElementById( 'glassVertexShader' ).textContent;
 		var passthroughVS = document.getElementById( 'passthroughVS' ).textContent;
-  	var fs = document.getElementById( 'fragmentShader' ).textContent;
+  	var fs = document.getElementById( 'glassFragmentShader' ).textContent;
   	var simulateCondensationFS = document.getElementById('simulateCondensationFS').textContent;
   	var renderCondensationFS = document.getElementById('renderCondensationFS').textContent;
   	var renderCondensationVS = document.getElementById('renderCondensationVS').textContent;
@@ -617,6 +674,8 @@
 				tCube: {type: "t", value: cubeMap},
 				t1: { type: "t", value: texture1  },
 				fresPower: {type:"f",value:options.fresPower},
+				resolution: { type: "v2", value: new THREE.Vector3(window.innerWidth, window.innerHeight) },
+
 			};
 			Object.assign(uniforms, uniformLights); //Copy lights into uniforms
 
@@ -625,7 +684,7 @@
 				vertexShader: vs,
 				fragmentShader: fs,	
 				transparent: true,
-				depthWrite: false,
+				//depthWrite: false,
 				blending: THREE.AdditiveBlending,
 			} );
 
@@ -642,6 +701,17 @@
 					glassMesh.material.uniforms.index2.value = value;
 				});
 			});
+			
+			// Wine wine
+			uniforms = {
+				tCube:{type:"t",value:cubeMap},
+			};
+			material = new THREE.MeshPhongMaterial({
+				//uniforms:uniforms,
+				color: 0xff0000,
+				})
+				
+			processBlenderObject('json/wine.json',material,new THREE.Vector3(0.0,-1.5,0.0), new  THREE.Vector3(0.012,0.012,0.012));
 			
 			// Condensation testing
 			var conMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 1.0, condensationResX, condensationResY), sceneCondensationMaterial);
