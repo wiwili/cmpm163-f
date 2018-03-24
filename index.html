@@ -432,6 +432,9 @@
 	  // y = velocity y
 	  // z = volume of water in grams
 	  uniform sampler2D waterSimulation;
+	  uniform vec3 light1_pos;
+	  uniform vec3 light1_specular;
+	  uniform vec3 light1_diffuse;
 	  
 	  varying vec2 vUV;
 	  
@@ -537,6 +540,17 @@
 			var light1_diffuse = new THREE.Vector3(options.light1_diff_x,options.light1_diff_y,options.light1_diff_z);
 			var light1_specular = new THREE.Vector3(options.light1_spec_x,options.light1_spec_y,options.light1_spec_z);
 			
+			var uniformLights = {
+				// Light
+				light1_pos: { type: "v3", value: light1_pos },
+				light1_specular:  { type: "v3", value: light1_specular },
+				light1_diffuse: { type: "v3", value: light1_diffuse },
+
+				// Index of refraction
+				index1: {type:"f", value:options.index1},
+				index2: {type:"f",value:options.index2},
+			}
+			
 			// -- Skybox
 			//	Skybox Shaders
 			var sb_vs = document.getElementById( 'skyboxVS' ).textContent;
@@ -557,17 +571,17 @@
 				] );
 			
 			// Condensation shader
-			initCondensation();
+			initCondensation(uniformLights);
 			
 			// Uniform
 			var uniforms_sb = {"tCube": {type:"t",value:cubeMap}};
 			
 			// Material
 			var material_sb = new THREE.RawShaderMaterial({
-					uniforms:uniforms_sb,
-					vertexShader:sb_vs,
-					fragmentShader:sb_fs,
-				});
+				uniforms:uniforms_sb,
+				vertexShader:sb_vs,
+				fragmentShader:sb_fs,
+			});
 				
 			material_sb.depthWrite = false;
 			material_sb.side = THREE.BackSide;
@@ -599,30 +613,20 @@
 			
 			// Wine glass
 			uniforms = {
-			// Light
-				light1_pos: { type: "v3", value: light1_pos },
-				light1_specular:  { type: "v3", value: light1_specular },
-			    light1_diffuse: { type: "v3", value: light1_diffuse },
-
-			// Index of refraction
-				index1: {type:"f", value:options.index1},
-				index2: {type:"f",value:options.index2},
-				
-			// Skymap
+				// Skymap
 				tCube: {type: "t", value: cubeMap},
 				t1: { type: "t", value: texture1  },
 				fresPower: {type:"f",value:options.fresPower},
-				
-
 			};
+			Object.assign(uniforms, uniformLights); //Copy lights into uniforms
 
 			material = new THREE.RawShaderMaterial( {
 				uniforms: uniforms,
 				vertexShader: vs,
 				fragmentShader: fs,	
-									transparent: true,
-					depthWrite: false,
-					blending: THREE.AdditiveBlending,
+				transparent: true,
+				depthWrite: false,
+				blending: THREE.AdditiveBlending,
 			} );
 
 
@@ -731,7 +735,7 @@
 
 		// Prepares the required condensation shaders
 		// Returns the material to be added to the main scene
-		function initCondensation() {
+		function initCondensation(uniformLights) {
 			orthoCamera = new THREE.OrthographicCamera( window.innerWidth / -2, window.innerWidth / 2, window.innerHeight / 2, window.innerHeight / -2, 0.1, 1000 );
 			orthoCamera.position.z = 0.2;
 			
@@ -763,11 +767,14 @@
 			var bufferObject = new THREE.Mesh( plane, waterBufferMaterial );
 			condensationBufferScene.add(bufferObject);
 			
+			var uniforms = {
+		    waterSimulation: { type: "t", value: dataTexture },
+		    textureSize : {type: "v2", value: new THREE.Vector2( condensationResX, condensationResY )},
+		  }
+			Object.assign(uniforms, uniformLights)
+			
 			sceneCondensationMaterial = new THREE.RawShaderMaterial( {
-			  uniforms: {
-			    waterSimulation: { type: "t", value: dataTexture },
-			    textureSize : {type: "v2", value: new THREE.Vector2( condensationResX, condensationResY )}
-			  },
+			  uniforms: uniforms,
 			    vertexShader: renderCondensationVS,
 			    fragmentShader: renderCondensationFS
 			} );
