@@ -70,6 +70,7 @@
 
 
   <script id="vertexShader" type="x-shader/x-vertex">
+	precision mediump float;
 
 	uniform mat3 normalMatrix;
 	uniform mat4 modelMatrix;
@@ -86,6 +87,11 @@
 	varying vec3 incident;
 	varying vec2 vUV;
 	
+	// Varying for Phong lighting
+	
+	uniform vec3 light1_pos;
+	varying vec3 N,L1,V;
+	
 	void main() {
 
 
@@ -96,7 +102,11 @@
 		
         vec4 mvPosition = viewMatrix * modelMatrix * vec4(position, 1.0); // model view position
 		
-		
+		// Phong
+		N = vec3(normalize(viewMatrix*modelMatrix*vec4(normal.xyz,0.0)).xyz);
+		vec4 L1_cam = viewMatrix * vec4(light1_pos, 1.0);
+		L1 = vec3(normalize(L1_cam - mvPosition).xyz);
+		V = normalize(-position.xyz);
 		/*
 		vRefraction = refract(incidentNormal,worldNormal,(rAir/rGlass));
 		vReflection = reflect(incidentNormal,worldNormal);
@@ -120,6 +130,10 @@
 	uniform float index2;
 	uniform float fresPower;
 	uniform float fresBias;
+	
+	uniform vec3 light1_pos;
+	uniform vec3 light1_specular;
+	uniform vec3 light1_diffuse;
 	
 	varying vec2 vUV;
 	varying vec3 worldNormal;
@@ -152,10 +166,19 @@
 		refractColor.x = textureCube(tCube, refract(incidentN, normal, index2)).x;
 		refractColor.y = textureCube(tCube, refract(incidentN, normal, index2-0.02)).y;
 		refractColor.z = textureCube(tCube, refract(incidentN, normal, index2-0.04)).z;
-
-		float fresnelEffect = fresnelApprox(-incidentN, normal);
 		
-        gl_FragColor = vec4(mix(refractColor, reflectColor, fresnelEffect),1.0);//c1; //, c2, 0.5);
+		// Fresnel estimate
+		float fresnelEffect = fresnelApprox(-incidentN, normal);	
+		
+		// Phong lighting
+		// Specular/Diffuse color
+		
+
+
+		
+		
+		
+        gl_FragColor = vec4(mix(refractColor, reflectColor, fresnelEffect),clamp(fresnelEffect,0.2,1.0));//c1; //, c2, 0.5);
 	}
 
 	</script>
@@ -498,7 +521,21 @@
 				index2: 1.51714, // Index of glass
 				fresBias: 0.15,
 				fresPower: 2.0,
+				light1_pos_x:0.0, // light XYZ position
+				light1_pos_y:10.0,
+				light1_pos_z:0.0,
+				light1_diff_r:1.0, // Diffuse color
+				light1_diff_g:0.0,
+				light1_diff_b:0.0,		
+				light1_spec_r:1.0, // Specular color
+				light1_spec_g:1.0,
+				light1_spec_b:1.0,					
 				};
+				
+			// Define lights
+			var light1_pos = new THREE.Vector3(options.light1_pos_x,options.light1_pos_y,options.light1_pos_z);
+			var light1_diffuse = new THREE.Vector3(options.light1_diff_x,options.light1_diff_y,options.light1_diff_z);
+			var light1_specular = new THREE.Vector3(options.light1_spec_x,options.light1_spec_y,options.light1_spec_z);
 			
 			// -- Skybox
 			//	Skybox Shaders
@@ -529,7 +566,7 @@
 			var material_sb = new THREE.RawShaderMaterial({
 					uniforms:uniforms_sb,
 					vertexShader:sb_vs,
-					fragmentShader:sb_fs
+					fragmentShader:sb_fs,
 				});
 				
 			material_sb.depthWrite = false;
@@ -539,6 +576,8 @@
 			skyMesh = new THREE.Mesh(geometry_sb,material_sb);
 			scene.add(skyMesh);
 
+			/*
+			// Ball
 			var uniforms = {
 				tCube: {type: "t", value: cubeMap},
 				index1: {type:"f", value:options.index1},
@@ -556,23 +595,38 @@
 			//var material = new THREE.MeshStandardMaterial({color:0x2194ce});
 			mesh = new THREE.Mesh(geometry, material);
 			scene.add(mesh);
+			*/
 			
+			// Wine glass
 			uniforms = {
+			// Light
+				light1_pos: { type: "v3", value: light1_pos },
+				light1_specular:  { type: "v3", value: light1_specular },
+			    light1_diffuse: { type: "v3", value: light1_diffuse },
+
+			// Index of refraction
 				index1: {type:"f", value:options.index1},
 				index2: {type:"f",value:options.index2},
 				
+			// Skymap
 				tCube: {type: "t", value: cubeMap},
 				t1: { type: "t", value: texture1  },
 				fresPower: {type:"f",value:options.fresPower},
+				
+
 			};
 
 			material = new THREE.RawShaderMaterial( {
 				uniforms: uniforms,
 				vertexShader: vs,
 				fragmentShader: fs,	
+									transparent: true,
+					depthWrite: false,
+					blending: THREE.AdditiveBlending,
 			} );
 
 
+			// Process glass object
 			processBlenderObject('json/glass.json', material, new THREE.Vector3(0, -1.5, 0), new THREE.Vector3(0.012,0.012,0.012), function(glassMesh) {
 				gui.add( options, "index1", 1,5).onChange(function(value){
 					glassMesh.material.uniforms.index1.value = value;
@@ -592,6 +646,38 @@
 			
 			processBlenderObject('json/cupnoodlelid.json', sceneCondensationMaterial, new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
 
+			// Setup lighting controller
+			// X
+			gui.add(options,"light1_pos_x",-10,10).onChange(function(value){
+				for(let i = 0; i < scene.children.length; i++)
+				{
+					if(scene.children[i].material.uniforms.light1_pos != undefined)
+					{
+						scene.children[i].material.uniforms.light1_pos.value.x = value;
+					}
+				}
+			});
+			// Y
+			gui.add(options,"light1_pos_y",-10,10).onChange(function(value){
+				for(let i = 0; i < scene.children.length; i++)
+				{
+					if(scene.children[i].material.uniforms.light1_pos != undefined)
+					{
+						scene.children[i].material.uniforms.light1_pos.value.y = value;
+					}
+				}
+			});
+			// Z
+			gui.add(options,"light1_pos_z",-10,10).onChange(function(value){
+				for(let i = 0; i < scene.children.length; i++)
+				{
+					if(scene.children[i].material.uniforms.light1_pos != undefined)
+					{
+						scene.children[i].material.uniforms.light1_pos.value.z = value;
+					}
+				}
+			});
+			
 			// Setup renderer
 			renderer = new THREE.WebGLRenderer();
 			renderer.setPixelRatio( window.devicePixelRatio );
