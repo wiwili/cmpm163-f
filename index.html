@@ -758,8 +758,8 @@
 			uniforms = {
 				tCube:{type:"t",value:cubeMap},
 			};
-			material = new THREE.MeshPhongMaterial({
-				//uniforms:uniforms,
+			material = new THREE.MeshStandardMaterial({
+				uniforms:uniforms,
 				color: 0xff0000,
 				})
 				
@@ -770,7 +770,25 @@
 			conMesh.position.set(0.0, 1.5, 0.0);
 			scene.add(conMesh);
 			
-			processBlenderObject('json/cupnoodlelid.json', sceneCondensationMaterial, new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
+			processBlenderObject('json/spaghettilidfront.json', sceneCondensationMaterial, new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
+			processBlenderObject('json/spaghettilidback.json', new THREE.MeshStandardMaterial, new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
+			// Cup
+			var textureCup = new THREE.TextureLoader().load("textures/cupnoodlecup.png");
+			var materialsCup = new THREE.MeshBasicMaterial({
+					map:textureCup,
+				});
+		
+			processBlenderObject('json/cupnoodlecup.json',materialsCup, new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
+			// Soup
+			var textureSoup = new THREE.TextureLoader().load("textures/cupnoodlesoup.png");
+			var materialsSoup = new THREE.MeshBasicMaterial({
+					map:textureSoup,
+					side:THREE.DoubleSide
+					});
+			processBlenderObject('json/cupnoodlesoup.json', materialsSoup , new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
+
+
+
 
 			// Setup lighting controller
 			// X
