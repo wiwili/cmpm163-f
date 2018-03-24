@@ -469,7 +469,7 @@
 	  
 	  uniform sampler2D waterSimulation;
 	  uniform vec3 light1_pos;
-	  uniform float condensation_bump; //If true, will add water to simulation
+	  uniform float condensation_bump;
 
 	  attribute vec3 position;
 	  attribute vec2 uv;
@@ -485,7 +485,7 @@
 	  // Sets up the varyings necessary for Phong lighting
 	  void setupPhong(vec3 savedPosition) {
 	  	//get the normalized vertex normal in CAMERA coordinates
-	  	vNormal = vec3(normalize(modelViewMatrix * vec4(normal, 0.0)).xyz) ;
+	  	vNormal = vec3(normalize(modelViewMatrix * vec4(normal + texture2D(waterSimulation, uv).z, 0.0)).xyz);
 
 	  	//get the vertex position in CAMERA coordinates
 	  	vec4 cameraPosition = modelViewMatrix * vec4(savedPosition, 1.0);
@@ -494,9 +494,9 @@
 	  	vIncident = normalize(-cameraPosition.xyz);
 	  }
 	  
-	  // Returns the normalized vector from the light to the vertex
-	  // Should be passed as a varying to the fragment shader for Phong lighting
-	  vec3 getPhongLight(vec3 light) {
+		  // Returns the normalized vector from the light to the vertex
+		  // Should be passed as a varying to the fragment shader for Phong lighting
+		  vec3 getPhongLight(vec3 light) {
 	  	//the lights positions are defined in WORLD coordinates, we want to put them in CAMERA coordinates too
 	  	vec4 lightCamera = viewMatrix * vec4(light, 1.0);
 	  	//get the normalized vectors from each light position to the vertex positions
@@ -525,6 +525,7 @@
 	  uniform vec3 light1_diffuse;
 	  uniform vec3 light1_specular;
 	  uniform float index1;
+	  uniform float condensation_bump;
 	  
 	  varying vec2 vUV;
 	  // Phong
@@ -562,12 +563,9 @@
 	    // to get to an adjacent point
 	    vec2 pointDelta = vec2(1.0/textureSize);
 	    
-	    // Update the velocity and volume
-	    // TO DO: calculate velocity and volume on septate passes
 	    // gl_FragColor = vec4(vec3(texture2D(waterSimulation, vUV).z), 1.0);
 	    vec4 color = phongLight(light1_pos, vec3(0.0), light1_specular, index1);
 	    gl_FragColor = color;
-	    // gl_FragColor = vec4(light1_diffuse, 1.0);
 	   }
 	</script>
 
@@ -910,7 +908,7 @@
 			var uniforms = {
 		    waterSimulation: { type: "t", value: dataTexture },
 		    textureSize : {type: "v2", value: new THREE.Vector2( condensationResX, condensationResY )},
-		    condensation_bump: {type: 'f', value: options.condensation_bump}
+		    condensation_bump: {type: 'f', value: options.condensation_bump},
 		  }
 			Object.assign(uniforms, uniformLights)
 			
@@ -918,9 +916,8 @@
 			  uniforms: uniforms,
 				vertexShader: renderCondensationVS,
 				fragmentShader: renderCondensationFS,
-		    transparent: true,
-		    side: THREE.DoubleSide,
-		    blending: THREE.AdditiveBlending,
+		    // transparent: true,
+		    // blending: THREE.AdditiveBlending,
 			});
 			
 			gui.add( options, "condensation_bump", 0.0,1.0).onChange(function(value){
