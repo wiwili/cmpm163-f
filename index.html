@@ -404,23 +404,55 @@
 	</script>
 	
 	<script id="renderCondensationVS" type="x-shader/x-vertex">
+		precision mediump float;
+		
 	  uniform mat4 modelViewMatrix;
+	  uniform mat4 viewMatrix;
 	  uniform mat4 projectionMatrix;
 	  
 	  uniform sampler2D waterSimulation;
+	  uniform vec3 light1_pos;
+	  uniform float condensation_bump; //If true, will add water to simulation
 
 	  attribute vec3 position;
 	  attribute vec2 uv;
 	  attribute vec3 normal;
 	  
 	  varying vec2 vUV;
+	  // For phong
+	  varying vec3 vPosition;
+	  varying vec3 vNormal;
+	  varying vec3 vIncident;
+	  varying vec3 vLight1;
+	  
+	  // Sets up the varyings necessary for Phong lighting
+	  void setupPhong(vec3 savedPosition) {
+	  	//get the normalized vertex normal in CAMERA coordinates
+	  	vNormal = vec3(normalize(modelViewMatrix * vec4(normal, 0.0)).xyz) ;
+
+	  	//get the vertex position in CAMERA coordinates
+	  	vec4 cameraPosition = modelViewMatrix * vec4(savedPosition, 1.0);
+
+	  	//reverse direction of position vector to get view vector from vertex to camera
+	  	vIncident = normalize(-cameraPosition.xyz);
+	  }
+	  
+	  // Returns the normalized vector from the light to the vertex
+	  // Should be passed as a varying to the fragment shader for Phong lighting
+	  vec3 getPhongLight(vec3 light) {
+	  	//the lights positions are defined in WORLD coordinates, we want to put them in CAMERA coordinates too
+	  	vec4 lightCamera = viewMatrix * vec4(light, 1.0);
+	  	//get the normalized vectors from each light position to the vertex positions
+	  	return normalize(lightCamera.xyz - (vNormal).xyz);
+	  }
 
 	  void main() {
 	    vUV = uv;
+	    vec3 newPosition = position + normal * texture2D(waterSimulation, uv).z * condensation_bump;
+	    setupPhong(newPosition);
+	    vLight1 = getPhongLight(light1_pos);
 	    
-	    vec3 displacement = normal * texture2D(waterSimulation, uv).z * 1.0;
-	    
-	    gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 ) + vec4(displacement, 0.0);
+	    gl_Position = projectionMatrix * modelViewMatrix * vec4( newPosition, 1.0 );
 	  }
 	</script>
 	
@@ -433,10 +465,38 @@
 	  // z = volume of water in grams
 	  uniform sampler2D waterSimulation;
 	  uniform vec3 light1_pos;
-	  uniform vec3 light1_specular;
 	  uniform vec3 light1_diffuse;
+	  uniform vec3 light1_specular;
+	  uniform float index1;
 	  
 	  varying vec2 vUV;
+	  // Phong
+	  varying vec3 vPosition;
+	  varying vec3 vNormal;
+	  varying vec3 vIncident;
+	  varying vec3 vLight1;
+	  
+	  // Calculates the Phong contribution from a light
+	  vec4 phongLight(vec3 light_position, vec3 light_diffuse, vec3 light_specular, float index_specular) {
+	  	vec4 outColor = vec4(0.0);
+	  	
+	  	//diffuse light depends on the angle between the light and the vertex normal
+	  	float diff = max(0.0, dot(vNormal, light_position)); //just to make sure not negative
+	  	vec3 color = diff * light_diffuse;
+	  	
+	  	//specular highlights depend upon the position/orientation of the camera and the direction of the light reflecting off of this geometry
+	  	vec3 R1 = normalize(reflect(-light_position,vNormal)); //get light vector reflected across the plane defined by the normal of this geometry
+	  	float spec = pow( max(dot(R1, vIncident), 0.0), index_specular); //raising the value to a particular intensity value shrinks the size of the specular highlight so that only a reflection vector (R1) that is very close to the view vector (vIncident) will be applied to this fragment.
+	  	
+	  	color += spec * light_specular;
+	  	if (spec > 1.0) {
+	  	  outColor = vec4(light_specular,1.0);
+	  	} else {
+	  	  outColor = clamp(vec4(color,1.0), 0.0,1.0);
+	  	}
+	  	
+	  	return outColor;
+	  }
 	  
 	  void main() {
 	    // The current cell on the texture
@@ -447,19 +507,10 @@
 	    
 	    // Update the velocity and volume
 	    // TO DO: calculate velocity and volume on septate passes
-	    gl_FragColor = vec4(vec3(texture2D(waterSimulation, vUV).z), 1.0);
-	    // if (texture2D(waterSimulation, vUV).x > 0.0) {
-	    //   gl_FragColor = vec4(1.0, 1.0, 0.0, 1.0);
-	    // }
-	    // if (texture2D(waterSimulation, vUV).y == 0.0) {
-	    //   gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);
-	    // }
-	    // if (texture2D(waterSimulation, vUV).y == 1.0) {
-	    //   gl_FragColor = vec4(1.0, 1.0, 0.0, 1.0);
-	    // }
-	    // if (texture2D(waterSimulation, vUV).x != 0.5) {
-	    //   gl_FragColor = vec4(0.0, 1.0, 1.0, 1.0);
-	    // }
+	    // gl_FragColor = vec4(vec3(texture2D(waterSimulation, vUV).z), 1.0);
+	    vec4 color = phongLight(light1_pos, vec3(0.0), light1_specular, index1);
+	    gl_FragColor = color;
+	    // gl_FragColor = vec4(light1_diffuse, 1.0);
 	   }
 	</script>
 
@@ -532,13 +583,14 @@
 				light1_diff_b:0.0,		
 				light1_spec_r:1.0, // Specular color
 				light1_spec_g:1.0,
-				light1_spec_b:1.0,					
+				light1_spec_b:1.0,
+				condensation_bump: 0.1,
 				};
 				
 			// Define lights
 			var light1_pos = new THREE.Vector3(options.light1_pos_x,options.light1_pos_y,options.light1_pos_z);
-			var light1_diffuse = new THREE.Vector3(options.light1_diff_x,options.light1_diff_y,options.light1_diff_z);
-			var light1_specular = new THREE.Vector3(options.light1_spec_x,options.light1_spec_y,options.light1_spec_z);
+			var light1_diffuse = new THREE.Vector3(options.light1_diff_r,options.light1_diff_g,options.light1_diff_b);
+			var light1_specular = new THREE.Vector3(options.light1_spec_r,options.light1_spec_g,options.light1_spec_b);
 			
 			var uniformLights = {
 				// Light
@@ -770,14 +822,22 @@
 			var uniforms = {
 		    waterSimulation: { type: "t", value: dataTexture },
 		    textureSize : {type: "v2", value: new THREE.Vector2( condensationResX, condensationResY )},
+		    condensation_bump: {type: 'f', value: options.condensation_bump}
 		  }
 			Object.assign(uniforms, uniformLights)
 			
 			sceneCondensationMaterial = new THREE.RawShaderMaterial( {
 			  uniforms: uniforms,
-			    vertexShader: renderCondensationVS,
-			    fragmentShader: renderCondensationFS
-			} );
+				vertexShader: renderCondensationVS,
+				fragmentShader: renderCondensationFS,
+		    transparent: true,
+		    side: THREE.DoubleSide,
+		    blending: THREE.AdditiveBlending,
+			});
+			
+			gui.add( options, "condensation_bump", 0.0,1.0).onChange(function(value){
+				sceneCondensationMaterial.uniforms.condensation_bump.value = value;
+			});
 			
 			return sceneCondensationMaterial;
 		}
