@@ -526,6 +526,7 @@
 	  uniform vec3 light1_specular;
 	  uniform float index1;
 	  uniform float condensation_bump;
+	  uniform sampler2D texture;
 	  
 	  varying vec2 vUV;
 	  // Phong
@@ -564,8 +565,8 @@
 	    vec2 pointDelta = vec2(1.0/textureSize);
 	    
 	    // gl_FragColor = vec4(vec3(texture2D(waterSimulation, vUV).z), 1.0);
-	    vec4 color = phongLight(light1_pos, vec3(0.0), light1_specular, index1);
-	    gl_FragColor = color;
+	    vec4 lightning = phongLight(light1_pos, vec3(0.0), light1_specular, index1);
+	    gl_FragColor = texture2D(texture, vUV) + lightning;
 	   }
 	</script>
 
@@ -599,8 +600,8 @@
 		// Condensation
 		var waterBufferMaterial;
 		var sceneCondensationMaterial;
-		var condensationResX = 128;
-		var condensationResY = 128;
+		var condensationResX = 512;
+		var condensationResY = 512;
 		var condensationBufferScene;
 		var condensationFBO_B;
 		var condensationFBO_A;
