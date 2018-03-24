@@ -770,6 +770,7 @@
 			scene.add(conMesh);
 			
 
+			
 			processBlenderObject('json/spaghettilidfront.json', sceneCondensationMaterial, new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
 			
 			// Outer Lid
@@ -914,10 +915,13 @@
 			var bufferObject = new THREE.Mesh( plane, waterBufferMaterial );
 			condensationBufferScene.add(bufferObject);
 			
+			var lidTexture = new THREE.TextureLoader().load("textures/cupnoodlelidinner.png");
+			
 			var uniforms = {
 		    waterSimulation: { type: "t", value: dataTexture },
 		    textureSize : {type: "v2", value: new THREE.Vector2( condensationResX, condensationResY )},
 		    condensation_bump: {type: 'f', value: options.condensation_bump},
+			texture: {type: 't', value: lidTexture},
 		  }
 			Object.assign(uniforms, uniformLights)
 			
