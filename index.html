@@ -68,8 +68,99 @@
 	
     </script>
 
+	<script id="wineVertexShader" type="x-shader/x-vertex">
+			precision mediump float;
 
-  <script id="vertexShader" type="x-shader/x-vertex">
+		uniform mat3 normalMatrix;
+		uniform mat4 modelMatrix;
+		uniform mat4 viewMatrix;
+		uniform mat4 projectionMatrix;
+		uniform vec3 cameraPosition;
+
+		attribute vec4 vertex;
+		attribute vec3 normal;
+		attribute vec3 position; 
+		attribute vec2 uv;
+
+		varying vec3 worldNormal;
+		varying vec3 incident;
+		varying vec2 vUV;
+		
+
+		void main() {
+
+
+			vUV = uv; 
+			vec4 worldPosition = modelMatrix * vec4( position, 1.0 ); // world position
+			worldNormal = normalize( mat3( modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz ) * normal ); // world space normal
+			incident = worldPosition.xyz - cameraPosition.xyz;
+			
+			vec4 mvPosition = viewMatrix * modelMatrix * vec4(position, 1.0); // model view position
+
+			gl_Position = projectionMatrix * mvPosition; 
+		}
+	</script>
+	<script id="wineFragmentShader" type="x-shader/x-fragment">
+	precision mediump float;
+	uniform samplerCube tCube;
+	uniform float index1;
+	uniform float index2;
+	uniform float fresPower;
+	uniform float fresBias;
+
+	
+	varying vec2 vUV;
+	varying vec3 worldNormal;
+	varying vec3 incident;
+
+
+	// Schlick's approximation of fresnel
+	// fresnelAngle = index + (1-cos(fresnelAngle))^5 * (1-index)
+		float fresnelApprox(vec3 incident, vec3 normal)
+		{
+			float bias = ((index1 - index2)*(index1-index2))/((index1 + index2)*(index1+index2));
+			float power = fresPower;
+			float scale = 1.0 - bias;
+			
+			return bias + pow(1.0-dot(incident,normal),power)*scale; 
+		}
+	
+
+      	void main() {
+		//normalize vectors
+		vec3 normal = normalize(worldNormal);
+		vec3 incidentN = normalize(incident);
+		
+		// find reflection
+		vec3 reflectV = normalize(reflect(incidentN,normal));
+		vec3 reflectColor = textureCube(tCube,reflectV).xyz;
+		// find refraction
+		vec3 refractColor;
+		refractColor.x = textureCube(tCube, refract(incidentN, normal, index2)).x;
+		refractColor.y = textureCube(tCube, refract(incidentN, normal, index2*0.98)).y;
+		refractColor.z = textureCube(tCube, refract(incidentN, normal, index2*0.96)).z;
+		
+		// Fresnel estimate
+		float fresnelEffect = fresnelApprox(-incidentN, normal);	
+		
+		
+		
+
+		// Mix colors from voronoi with glass reflection
+		vec3 fresCol =  mix(refractColor, reflectColor, fresnelEffect);
+		fresCol.r *= 1.0;
+		fresCol.g *= 0.5;
+		fresCol.b *= 0.5;
+		
+        gl_FragColor = vec4(fresCol,1.0);//c1; //, c2, 0.5);
+		//gl_FragColor = vec4(cellCol,1.0);
+		//gl_FragColor = vec4(thickness,thickness,thickness,1.0);
+	}
+
+	</script>
+
+
+  <script id="glassVertexShader" type="x-shader/x-vertex">
 	precision mediump float;
 
 	uniform mat3 normalMatrix;
@@ -107,22 +198,14 @@
 		vec4 L1_cam = viewMatrix * vec4(light1_pos, 1.0);
 		L1 = vec3(normalize(L1_cam - mvPosition).xyz);
 		V = normalize(-position.xyz);
-		/*
-		vRefraction = refract(incidentNormal,worldNormal,(rAir/rGlass));
-		vReflection = reflect(incidentNormal,worldNormal);
-		// Schlick's approximation of fresnel
-		//vReflectionFactor = mFresnelBias + mFresnelScale * pow( 1.0 + dot( normalize( I ), worldNormal ), mFresnelPower);
 
-		vFresnel = rIndex + (1.0 - rIndex) * pow((1.0-dot(-incidentNormal,worldNormal)),5.0);
-		*/
-		
         gl_Position = projectionMatrix * mvPosition; 
     }
 
     </script>
 
 
-    <script id="fragmentShader" type="x-shader/x-fragment">
+    <script id="glassFragmentShader" type="x-shader/x-fragment">
 
 	precision mediump float;
 	uniform samplerCube tCube;
@@ -130,6 +213,8 @@
 	uniform float index2;
 	uniform float fresPower;
 	uniform float fresBias;
+	uniform vec2 resolution;
+
 	
 	uniform vec3 light1_pos;
 	uniform vec3 light1_specular;
@@ -151,7 +236,60 @@
 			return bias + pow(1.0-dot(incident,normal),power)*scale; 
 		}
 	
-	
+	// Hash function
+	vec2 hash2( vec2 p )
+	{
+		// procedural white noise	
+		return fract(sin(vec2(dot(p,vec2(127.1,311.7)),dot(p,vec2(269.5,183.3))))*43758.5453);
+	}
+		
+	vec3 voronoi( in vec2 x )
+	{
+		vec2 n = floor(x);
+		vec2 f = fract(x);
+
+		//----------------------------------
+		// first pass: regular voronoi
+		//----------------------------------
+		vec2 mg, mr;
+		float id;
+
+		float md = 8.0;
+		for( int j=-1; j<=1; j++ )
+		for( int i=-1; i<=1; i++ )
+		{
+			vec2 g = vec2(float(i),float(j));
+			vec2 o = hash2( n + g );
+			vec2 ao = o;
+			vec2 r = g + ao - f;
+			float d = dot(r,r);
+
+			if( d<md )
+			{
+				md = d;
+				mr = r;
+				mg = g;
+				id = o.x+o.y;
+			}
+		}
+
+		//----------------------------------
+		// second pass: distance to borders
+		//----------------------------------
+		md = 8.0;
+		for( int j=-2; j<=2; j++ )
+		for( int i=-2; i<=2; i++ )
+		{
+			vec2 g = mg + vec2(float(i),float(j));
+			vec2 o = hash2( n + g );
+			vec2 r = g + o - f;
+
+			if( dot(mr-r,mr-r)>0.00001 )
+			md = min( md, dot( 0.5*(mr+r), normalize(r-mr) ) );
+		}
+
+		return vec3( length(mr), id, md );
+	}
 	
       	void main() {
 		//normalize vectors
@@ -164,8 +302,8 @@
 		// find refraction
 		vec3 refractColor;
 		refractColor.x = textureCube(tCube, refract(incidentN, normal, index2)).x;
-		refractColor.y = textureCube(tCube, refract(incidentN, normal, index2-0.02)).y;
-		refractColor.z = textureCube(tCube, refract(incidentN, normal, index2-0.04)).z;
+		refractColor.y = textureCube(tCube, refract(incidentN, normal, index2*0.98)).y;
+		refractColor.z = textureCube(tCube, refract(incidentN, normal, index2*0.96)).z;
 		
 		// Fresnel estimate
 		float fresnelEffect = fresnelApprox(-incidentN, normal);	
@@ -173,12 +311,22 @@
 		// Phong lighting
 		// Specular/Diffuse color
 		
+		// Voronoi
+		vec3 c = voronoi( 8.0*(vUV*vec2(2.0,2.0)) );
+		vec3 cellCol =  0.5 + 0.5*cos( c.y*6.2831 + vec3(0.0,1.0,2.0) ); // Color each cell
+		// Border
+		float thickness = smoothstep(0.0, 0.4, c.z);
+		thickness = pow((thickness), 0.25);
+		cellCol *= thickness;
+		
 
-
+		// Mix colors from voronoi with glass reflection
+		vec3 fresCol =  mix(refractColor, reflectColor, fresnelEffect);
+		vec3 finalCol = mix(fresCol, cellCol,0.5);
 		
-		
-		
-        gl_FragColor = vec4(mix(refractColor, reflectColor, fresnelEffect),clamp(fresnelEffect,0.2,1.0));//c1; //, c2, 0.5);
+        gl_FragColor = vec4(finalCol,clamp(fresnelEffect,0.6,1.0));//c1; //, c2, 0.5);
+		//gl_FragColor = vec4(cellCol,1.0);
+		//gl_FragColor = vec4(thickness,thickness,thickness,1.0);
 	}
 
 	</script>
@@ -404,23 +552,55 @@
 	</script>
 	
 	<script id="renderCondensationVS" type="x-shader/x-vertex">
+		precision mediump float;
+		
 	  uniform mat4 modelViewMatrix;
+	  uniform mat4 viewMatrix;
 	  uniform mat4 projectionMatrix;
 	  
 	  uniform sampler2D waterSimulation;
+	  uniform vec3 light1_pos;
+	  uniform float condensation_bump;
 
 	  attribute vec3 position;
 	  attribute vec2 uv;
 	  attribute vec3 normal;
 	  
 	  varying vec2 vUV;
+	  // For phong
+	  varying vec3 vPosition;
+	  varying vec3 vNormal;
+	  varying vec3 vIncident;
+	  varying vec3 vLight1;
+	  
+	  // Sets up the varyings necessary for Phong lighting
+	  void setupPhong(vec3 savedPosition) {
+	  	//get the normalized vertex normal in CAMERA coordinates
+	  	vNormal = vec3(normalize(modelViewMatrix * vec4(normal + texture2D(waterSimulation, uv).z, 0.0)).xyz);
+
+	  	//get the vertex position in CAMERA coordinates
+	  	vec4 cameraPosition = modelViewMatrix * vec4(savedPosition, 1.0);
+
+	  	//reverse direction of position vector to get view vector from vertex to camera
+	  	vIncident = normalize(-cameraPosition.xyz);
+	  }
+	  
+		  // Returns the normalized vector from the light to the vertex
+		  // Should be passed as a varying to the fragment shader for Phong lighting
+		  vec3 getPhongLight(vec3 light) {
+	  	//the lights positions are defined in WORLD coordinates, we want to put them in CAMERA coordinates too
+	  	vec4 lightCamera = viewMatrix * vec4(light, 1.0);
+	  	//get the normalized vectors from each light position to the vertex positions
+	  	return normalize(lightCamera.xyz - (vNormal).xyz);
+	  }
 
 	  void main() {
 	    vUV = uv;
+	    vec3 newPosition = position + normal * texture2D(waterSimulation, uv).z * condensation_bump;
+	    setupPhong(newPosition);
+	    vLight1 = getPhongLight(light1_pos);
 	    
-	    vec3 displacement = normal * texture2D(waterSimulation, uv).z * 1.0;
-	    
-	    gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 ) + vec4(displacement, 0.0);
+	    gl_Position = projectionMatrix * modelViewMatrix * vec4( newPosition, 1.0 );
 	  }
 	</script>
 	
@@ -432,40 +612,55 @@
 	  // y = velocity y
 	  // z = volume of water in grams
 	  uniform sampler2D waterSimulation;
+	  uniform vec3 light1_pos;
+	  uniform vec3 light1_diffuse;
+	  uniform vec3 light1_specular;
+	  uniform float index1;
+	  uniform float condensation_bump;
+	  uniform sampler2D texture;
 	  
 	  varying vec2 vUV;
+	  // Phong
+	  varying vec3 vPosition;
+	  varying vec3 vNormal;
+	  varying vec3 vIncident;
+	  varying vec3 vLight1;
+	  
+	  // Calculates the Phong contribution from a light
+	  vec4 phongLight(vec3 light_position, vec3 light_diffuse, vec3 light_specular, float index_specular) {
+	  	vec4 outColor = vec4(0.0);
+	  	
+	  	//diffuse light depends on the angle between the light and the vertex normal
+	  	float diff = max(0.0, dot(vNormal, light_position)); //just to make sure not negative
+	  	vec3 color = diff * light_diffuse;
+	  	
+	  	//specular highlights depend upon the position/orientation of the camera and the direction of the light reflecting off of this geometry
+	  	vec3 R1 = normalize(reflect(-light_position,vNormal)); //get light vector reflected across the plane defined by the normal of this geometry
+	  	float spec = pow( max(dot(R1, vIncident), 0.0), index_specular); //raising the value to a particular intensity value shrinks the size of the specular highlight so that only a reflection vector (R1) that is very close to the view vector (vIncident) will be applied to this fragment.
+	  	
+	  	color += spec * light_specular;
+	  	if (spec > 1.0) {
+	  	  outColor = vec4(light_specular,1.0);
+	  	} else {
+	  	  outColor = clamp(vec4(color,1.0), 0.0,1.0);
+	  	}
+	  	
+	  	return outColor;
+	  }
 	  
 	  void main() {
-	    // The current cell on the texture
-	    vec2 point = vUV;
-	    // The amount you need to add or subtract from the current point
-	    // to get to an adjacent point
-	    vec2 pointDelta = vec2(1.0/textureSize);
-	    
-	    // Update the velocity and volume
-	    // TO DO: calculate velocity and volume on septate passes
-	    gl_FragColor = vec4(vec3(texture2D(waterSimulation, vUV).z), 1.0);
-	    // if (texture2D(waterSimulation, vUV).x > 0.0) {
-	    //   gl_FragColor = vec4(1.0, 1.0, 0.0, 1.0);
-	    // }
-	    // if (texture2D(waterSimulation, vUV).y == 0.0) {
-	    //   gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);
-	    // }
-	    // if (texture2D(waterSimulation, vUV).y == 1.0) {
-	    //   gl_FragColor = vec4(1.0, 1.0, 0.0, 1.0);
-	    // }
-	    // if (texture2D(waterSimulation, vUV).x != 0.5) {
-	    //   gl_FragColor = vec4(0.0, 1.0, 1.0, 1.0);
-	    // }
+	    // Disable disuse lightning
+	    vec4 lightning = phongLight(light1_pos, vec3(0.0), light1_specular, index1);
+	    gl_FragColor = texture2D(texture, vUV) + lightning * 0.5;
 	   }
 	</script>
 
 	<script>
 
 		// Load shaders
-		var vs = document.getElementById( 'vertexShader' ).textContent;
+		var vs = document.getElementById( 'glassVertexShader' ).textContent;
 		var passthroughVS = document.getElementById( 'passthroughVS' ).textContent;
-  	var fs = document.getElementById( 'fragmentShader' ).textContent;
+  	var fs = document.getElementById( 'glassFragmentShader' ).textContent;
   	var simulateCondensationFS = document.getElementById('simulateCondensationFS').textContent;
   	var renderCondensationFS = document.getElementById('renderCondensationFS').textContent;
   	var renderCondensationVS = document.getElementById('renderCondensationVS').textContent;
@@ -490,8 +685,8 @@
 		// Condensation
 		var waterBufferMaterial;
 		var sceneCondensationMaterial;
-		var condensationResX = 128;
-		var condensationResY = 128;
+		var condensationResX = 512;
+		var condensationResY = 512;
 		var condensationBufferScene;
 		var condensationFBO_B;
 		var condensationFBO_A;
@@ -529,13 +724,25 @@
 				light1_diff_b:0.0,		
 				light1_spec_r:1.0, // Specular color
 				light1_spec_g:1.0,
-				light1_spec_b:1.0,					
+				light1_spec_b:1.0,
+				condensation_bump: 0.1,
 				};
 				
 			// Define lights
 			var light1_pos = new THREE.Vector3(options.light1_pos_x,options.light1_pos_y,options.light1_pos_z);
-			var light1_diffuse = new THREE.Vector3(options.light1_diff_x,options.light1_diff_y,options.light1_diff_z);
-			var light1_specular = new THREE.Vector3(options.light1_spec_x,options.light1_spec_y,options.light1_spec_z);
+			var light1_diffuse = new THREE.Vector3(options.light1_diff_r,options.light1_diff_g,options.light1_diff_b);
+			var light1_specular = new THREE.Vector3(options.light1_spec_r,options.light1_spec_g,options.light1_spec_b);
+			
+			var uniformLights = {
+				// Light
+				light1_pos: { type: "v3", value: light1_pos },
+				light1_specular:  { type: "v3", value: light1_specular },
+				light1_diffuse: { type: "v3", value: light1_diffuse },
+
+				// Index of refraction
+				index1: {type:"f", value:options.index1},
+				index2: {type:"f",value:options.index2},
+			}
 			
 			// -- Skybox
 			//	Skybox Shaders
@@ -557,17 +764,17 @@
 				] );
 			
 			// Condensation shader
-			initCondensation();
+			initCondensation(uniformLights);
 			
 			// Uniform
 			var uniforms_sb = {"tCube": {type:"t",value:cubeMap}};
 			
 			// Material
 			var material_sb = new THREE.RawShaderMaterial({
-					uniforms:uniforms_sb,
-					vertexShader:sb_vs,
-					fragmentShader:sb_fs,
-				});
+				uniforms:uniforms_sb,
+				vertexShader:sb_vs,
+				fragmentShader:sb_fs,
+			});
 				
 			material_sb.depthWrite = false;
 			material_sb.side = THREE.BackSide;
@@ -599,30 +806,22 @@
 			
 			// Wine glass
 			uniforms = {
-			// Light
-				light1_pos: { type: "v3", value: light1_pos },
-				light1_specular:  { type: "v3", value: light1_specular },
-			    light1_diffuse: { type: "v3", value: light1_diffuse },
-
-			// Index of refraction
-				index1: {type:"f", value:options.index1},
-				index2: {type:"f",value:options.index2},
-				
-			// Skymap
+				// Skymap
 				tCube: {type: "t", value: cubeMap},
 				t1: { type: "t", value: texture1  },
 				fresPower: {type:"f",value:options.fresPower},
-				
+				resolution: { type: "v2", value: new THREE.Vector3(window.innerWidth, window.innerHeight) },
 
 			};
+			Object.assign(uniforms, uniformLights); //Copy lights into uniforms
 
 			material = new THREE.RawShaderMaterial( {
 				uniforms: uniforms,
 				vertexShader: vs,
 				fragmentShader: fs,	
-									transparent: true,
-					depthWrite: false,
-					blending: THREE.AdditiveBlending,
+				transparent: true,
+				//depthWrite: false,
+				blending: THREE.AdditiveBlending,
 			} );
 
 
@@ -639,19 +838,66 @@
 				});
 			});
 			
-			// Condensation testing
-			var conMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 1.0, condensationResX, condensationResY), sceneCondensationMaterial);
-			conMesh.position.set(0.0, 1.5, 0.0);
-			scene.add(conMesh);
+			// Wine wine
+			var w_vs = document.getElementById( 'wineVertexShader' ).textContent;
+			var w_fs = document.getElementById( 'wineFragmentShader' ).textContent;
 			
-			processBlenderObject('json/cupnoodlelid.json', sceneCondensationMaterial, new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
+			uniforms = {
+				tCube:{type:"t",value:cubeMap},
+				index1: {type:"f",value:1.0}, // Index of air (vacuum)
+				index2: {type:"f",value:1.51714}, // Index of glass
+				fresBias: {type:"f",value:0.15},
+				fresPower: {type:"f",value:2.0},
+			};
+
+			material = new THREE.RawShaderMaterial({
+				uniforms:uniforms,
+				vertexShader: w_vs,
+				fragmentShader: w_fs,	
+				})
+				
+			processBlenderObject('json/wine.json',material,new THREE.Vector3(0.0,-1.5,0.0), new  THREE.Vector3(0.012,0.012,0.012));
+			
+			// // Condensation testing
+			// var conMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 1.0, condensationResX, condensationResY), sceneCondensationMaterial);
+			// conMesh.position.set(0.0, 1.5, 0.0);
+			// scene.add(conMesh);
+			
+
+			
+			processBlenderObject('json/spaghettilidfront.json', sceneCondensationMaterial, new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
+			
+			// Outer Lid
+			var textureLidOuter = new THREE.TextureLoader().load("textures/spaghettifront_.png");
+			var materialsOuter = new THREE.MeshBasicMaterial({
+					map:textureLidOuter,
+				});
+			
+			processBlenderObject('json/spaghettilidback.json', materialsOuter, new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
+			// Cup
+			var textureCup = new THREE.TextureLoader().load("textures/cupnoodlecup.png");
+			var materialsCup = new THREE.MeshBasicMaterial({
+					map:textureCup,
+				});
+		
+			processBlenderObject('json/cupnoodlecup.json',materialsCup, new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
+			// Soup
+			var textureSoup = new THREE.TextureLoader().load("textures/cupnoodlesoup.png");
+			var materialsSoup = new THREE.MeshBasicMaterial({
+					map:textureSoup,
+					side:THREE.DoubleSide
+					});
+			processBlenderObject('json/cupnoodlesoup.json', materialsSoup , new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
+
+
+
 
 			// Setup lighting controller
 			// X
 			gui.add(options,"light1_pos_x",-10,10).onChange(function(value){
 				for(let i = 0; i < scene.children.length; i++)
 				{
-					if(scene.children[i].material.uniforms.light1_pos != undefined)
+					if(scene.children[i].material.uniforms != undefined && scene.children[i].material.uniforms.light1_pos != undefined)
 					{
 						scene.children[i].material.uniforms.light1_pos.value.x = value;
 					}
@@ -661,7 +907,7 @@
 			gui.add(options,"light1_pos_y",-10,10).onChange(function(value){
 				for(let i = 0; i < scene.children.length; i++)
 				{
-					if(scene.children[i].material.uniforms.light1_pos != undefined)
+					if(scene.children[i].material.uniforms != undefined && scene.children[i].material.uniforms.light1_pos != undefined)
 					{
 						scene.children[i].material.uniforms.light1_pos.value.y = value;
 					}
@@ -671,7 +917,7 @@
 			gui.add(options,"light1_pos_z",-10,10).onChange(function(value){
 				for(let i = 0; i < scene.children.length; i++)
 				{
-					if(scene.children[i].material.uniforms.light1_pos != undefined)
+					if(scene.children[i].material.uniforms != undefined && scene.children[i].material.uniforms.light1_pos != undefined)
 					{
 						scene.children[i].material.uniforms.light1_pos.value.z = value;
 					}
@@ -731,7 +977,7 @@
 
 		// Prepares the required condensation shaders
 		// Returns the material to be added to the main scene
-		function initCondensation() {
+		function initCondensation(uniformLights) {
 			orthoCamera = new THREE.OrthographicCamera( window.innerWidth / -2, window.innerWidth / 2, window.innerHeight / 2, window.innerHeight / -2, 0.1, 1000 );
 			orthoCamera.position.z = 0.2;
 			
@@ -763,14 +1009,27 @@
 			var bufferObject = new THREE.Mesh( plane, waterBufferMaterial );
 			condensationBufferScene.add(bufferObject);
 			
+			var lidTexture = new THREE.TextureLoader().load("textures/cupnoodlelidinner.png");
+			
+			var uniforms = {
+		    waterSimulation: { type: "t", value: dataTexture },
+		    textureSize : {type: "v2", value: new THREE.Vector2( condensationResX, condensationResY )},
+		    condensation_bump: {type: 'f', value: options.condensation_bump},
+			texture: {type: 't', value: lidTexture},
+		  }
+			Object.assign(uniforms, uniformLights)
+			
 			sceneCondensationMaterial = new THREE.RawShaderMaterial( {
-			  uniforms: {
-			    waterSimulation: { type: "t", value: dataTexture },
-			    textureSize : {type: "v2", value: new THREE.Vector2( condensationResX, condensationResY )}
-			  },
-			    vertexShader: renderCondensationVS,
-			    fragmentShader: renderCondensationFS
-			} );
+			  uniforms: uniforms,
+				vertexShader: renderCondensationVS,
+				fragmentShader: renderCondensationFS,
+		    // transparent: true,
+		    // blending: THREE.AdditiveBlending,
+			});
+			
+			gui.add( options, "condensation_bump", 0.0,1.0).onChange(function(value){
+				sceneCondensationMaterial.uniforms.condensation_bump.value = value;
+			});
 			
 			return sceneCondensationMaterial;
 		}
