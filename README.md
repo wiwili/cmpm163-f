@@ -18,7 +18,7 @@ Python 3 - python -m http.server *port*
 
 ## Screenshots
 ![alt text](https://wiwili.github.io/cmpm163-f/screenshot/1.png "Screenshot 1")
-![alt text](https://wiwili.github.io/cmpm163-f/screenshot/2.png "Screenshot 2")
+![alt text](https://wiwili.github.io/cmpm163-f/screenshot/2.PNG "Screenshot 2")
 
 ## Highlight Video
 [YouTube Link](https://youtu.be/Z4W4W9P60iE)
