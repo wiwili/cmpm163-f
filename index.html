@@ -649,15 +649,9 @@
 	  }
 	  
 	  void main() {
-	    // The current cell on the texture
-	    vec2 point = vUV;
-	    // The amount you need to add or subtract from the current point
-	    // to get to an adjacent point
-	    vec2 pointDelta = vec2(1.0/textureSize);
-	    
-	    // gl_FragColor = vec4(vec3(texture2D(waterSimulation, vUV).z), 1.0);
+	    // Disable disuse lightning
 	    vec4 lightning = phongLight(light1_pos, vec3(0.0), light1_specular, index1);
-	    gl_FragColor = texture2D(texture, vUV) + lightning;
+	    gl_FragColor = texture2D(texture, vUV) + lightning * 0.5;
 	   }
 	</script>
 
@@ -855,18 +849,25 @@
 				fresBias: {type:"f",value:0.15},
 				fresPower: {type:"f",value:2.0},
 			};
+<<<<<<< HEAD
 			material = new THREE.RawShaderMaterial({
 				uniforms:uniforms,
 				vertexShader: w_vs,
 				fragmentShader: w_fs,	
 				})
+=======
+			// material = new THREE.MeshStandardMaterial({
+			// 	uniforms:uniforms,
+			// 	color: 0xff0000,
+			// 	})
+>>>>>>> ca1da5d1bd5e6111eb34770e6e918a1f33253b93
 				
 			processBlenderObject('json/wine.json',material,new THREE.Vector3(0.0,-1.5,0.0), new  THREE.Vector3(0.012,0.012,0.012));
 			
-			// Condensation testing
-			var conMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 1.0, condensationResX, condensationResY), sceneCondensationMaterial);
-			conMesh.position.set(0.0, 1.5, 0.0);
-			scene.add(conMesh);
+			// // Condensation testing
+			// var conMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 1.0, condensationResX, condensationResY), sceneCondensationMaterial);
+			// conMesh.position.set(0.0, 1.5, 0.0);
+			// scene.add(conMesh);
 			
 
 			
@@ -902,7 +903,7 @@
 			gui.add(options,"light1_pos_x",-10,10).onChange(function(value){
 				for(let i = 0; i < scene.children.length; i++)
 				{
-					if(scene.children[i].material.uniforms.light1_pos != undefined)
+					if(scene.children[i].material.uniforms != undefined && scene.children[i].material.uniforms.light1_pos != undefined)
 					{
 						scene.children[i].material.uniforms.light1_pos.value.x = value;
 					}
@@ -912,7 +913,7 @@
 			gui.add(options,"light1_pos_y",-10,10).onChange(function(value){
 				for(let i = 0; i < scene.children.length; i++)
 				{
-					if(scene.children[i].material.uniforms.light1_pos != undefined)
+					if(scene.children[i].material.uniforms != undefined && scene.children[i].material.uniforms.light1_pos != undefined)
 					{
 						scene.children[i].material.uniforms.light1_pos.value.y = value;
 					}
@@ -922,7 +923,7 @@
 			gui.add(options,"light1_pos_z",-10,10).onChange(function(value){
 				for(let i = 0; i < scene.children.length; i++)
 				{
-					if(scene.children[i].material.uniforms.light1_pos != undefined)
+					if(scene.children[i].material.uniforms != undefined && scene.children[i].material.uniforms.light1_pos != undefined)
 					{
 						scene.children[i].material.uniforms.light1_pos.value.z = value;
 					}
