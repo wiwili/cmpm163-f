@@ -49,7 +49,7 @@
 		vec4 p = viewMatrix * modelMatrix * vec4(position, 1.0);
 		gl_Position = projectionMatrix * p;
 		
-     	 }
+     	}
 
     </script>
 
@@ -686,6 +686,49 @@
 				gl_FragColor.rgb += factor;
 			}
 		</script>
+		
+		<script id="bufferVertexShader" type="x-shader/x-vertex">
+		precision mediump float;
+
+		uniform mat4 modelViewMatrix;
+		uniform mat4 modelMatrix;
+		uniform mat4 viewMatrix;
+      	uniform mat4 projectionMatrix;
+
+     	attribute vec3 position; 
+		attribute vec2 uv;
+		
+		varying vec2 vUv;
+
+		void main() {
+
+		  vUv = uv;
+		  gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+
+		}
+		</script>
+		<script id="bufferFragmentShader" type="x-shader/x-fragment">
+		precision mediump float;
+		uniform sampler2D texture;
+		
+		varying vec2 vUv;
+
+		void main() {
+
+			 vec4 outputColor = texture2D(texture, vUv);
+
+			if ( outputColor.r > 0.5)
+			{
+				gl_FragColor = vec4( outputColor.rgb, outputColor.r);
+			}
+			else
+			{
+				gl_FragColor = vec4(outputColor.rgb,0.0);
+			}
+
+		}
+		</script>
+
 
 
 	<script>
@@ -693,11 +736,13 @@
 		// Load shaders
 		var vs = document.getElementById( 'glassVertexShader' ).textContent;
 		var passthroughVS = document.getElementById( 'passthroughVS' ).textContent;
-  	var fs = document.getElementById( 'glassFragmentShader' ).textContent;
-  	var simulateCondensationFS = document.getElementById('simulateCondensationFS').textContent;
-  	var renderCondensationFS = document.getElementById('renderCondensationFS').textContent;
-  	var renderCondensationVS = document.getElementById('renderCondensationVS').textContent;
-  	var steamFS = document.getElementById('steamFragmentShader').textContent;
+		var fs = document.getElementById( 'glassFragmentShader' ).textContent;
+		var simulateCondensationFS = document.getElementById('simulateCondensationFS').textContent;
+		var renderCondensationFS = document.getElementById('renderCondensationFS').textContent;
+		var renderCondensationVS = document.getElementById('renderCondensationVS').textContent;
+		var steamFS = document.getElementById('steamFragmentShader').textContent;
+		var bvs = document.getElementById('bufferVertexShader').textContent;
+		var bfs = document.getElementById('bufferFragmentShader').textContent;
 
 		// Declare variables
 		var container;
@@ -802,7 +847,7 @@
 			var geometry_sb = new THREE.BoxGeometry(2000,2000,2000);
 			
 			cubeMap = new THREE.CubeTextureLoader()
-				.setPath("./cubemap/")
+				.setPath("./DallasW/")
 				.load( [
 			'posx.jpg',
 			'negx.jpg',
@@ -875,7 +920,7 @@
 
 
 			// Process glass object
-			processBlenderObject('json/glass.json', material, new THREE.Vector3(0, -1.5, 0), new THREE.Vector3(0.012,0.012,0.012), function(glassMesh) {
+			processBlenderObject('json/glass.json', material, new THREE.Vector3(-1, -1.5, 0), new THREE.Vector3(0.012,0.012,0.012), function(glassMesh) {
 				gui.add( options, "index1", 1,5).onChange(function(value){
 					glassMesh.material.uniforms.index1.value = value;
 				});
@@ -902,10 +947,10 @@
 			material = new THREE.RawShaderMaterial({
 				uniforms:uniforms,
 				vertexShader: w_vs,
-				fragmentShader: w_fs,	
+				fragmentShader: w_fs,
 				})
 				
-			processBlenderObject('json/wine.json',material,new THREE.Vector3(0.0,-1.5,0.0), new  THREE.Vector3(0.012,0.012,0.012));
+			processBlenderObject('json/wine.json',material,new THREE.Vector3(-1.0,-1.5,0.0), new  THREE.Vector3(0.012,0.012,0.012));
 			
 			// // Condensation testing
 			// var conMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 1.0, condensationResX, condensationResY), sceneCondensationMaterial);
@@ -959,13 +1004,35 @@
             bufferObject = new THREE.Mesh( plane, bufferMaterial );
             bufferScene.add(bufferObject);
 
-	        finalMaterial =  new THREE.MeshBasicMaterial({map: textureB});
+			var steamUniform = {
+				texture:{type:"t", value: textureB},
+			};
+	        finalMaterial =  new THREE.RawShaderMaterial({
+				uniforms:steamUniform,
+				vertexShader:bvs,
+				fragmentShader:bfs,
+				transparent:true,
+				depthWrite: false,
+				side: THREE.DoubleSide
+				});
             quad = new THREE.Mesh( plane, finalMaterial );
-            quad.position.x += 2.0;
+            quad.position.x += 1.7;
             quad.position.y -= 0.3;
             scene.add(quad);
 			//processBlenderObject('json/cupnoodlesoup.json', finalMaterial , new THREE.Vector3(2, -1.5, -1), new THREE.Vector3(1.0,1.0,1.0));
 
+			// Table
+			var textureWood = new THREE.TextureLoader().load("textures/wood.jpg");
+			textureWood.wrapS = THREE.RepeatWrapping;
+			textureWood.wrapT = THREE.RepeatWrapping;
+			textureWood.repeat.set( 4, 4 );
+
+			var tableGeometry = new THREE.BoxGeometry(15,0,8);
+			var tableMaterial = new THREE.MeshBasicMaterial({map:textureWood});
+			var table = new THREE.Mesh(tableGeometry,tableMaterial);
+			table.position.set(1,-2.0,0)
+			scene.add(table);
+			
 			// Setup lighting controller
 			// X
 			gui.add(options,"light1_pos_x",-10,10).onChange(function(value){
