@@ -849,18 +849,12 @@
 				fresBias: {type:"f",value:0.15},
 				fresPower: {type:"f",value:2.0},
 			};
-<<<<<<< HEAD
+
 			material = new THREE.RawShaderMaterial({
 				uniforms:uniforms,
 				vertexShader: w_vs,
 				fragmentShader: w_fs,	
 				})
-=======
-			// material = new THREE.MeshStandardMaterial({
-			// 	uniforms:uniforms,
-			// 	color: 0xff0000,
-			// 	})
->>>>>>> ca1da5d1bd5e6111eb34770e6e918a1f33253b93
 				
 			processBlenderObject('json/wine.json',material,new THREE.Vector3(0.0,-1.5,0.0), new  THREE.Vector3(0.012,0.012,0.012));
 			

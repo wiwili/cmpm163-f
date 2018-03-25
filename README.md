@@ -7,7 +7,7 @@
 * Wilbur Li created the stained glass shader and textured the models and generally helped make the scene
 
 ## Project Link
-[View project](https://github.com/wiwili/cmpm163-f/index.html)
+[View project](https://wiwili.github.io/cmpm163-f/)
 
 ## Highlight Video
 [TBD](https://youtube.com)
