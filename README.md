@@ -7,7 +7,7 @@
 * Wilbur Li created the stained glass shader and textured the models and generally helped make the scene
 
 ## Project Link
-[View project](https://wiwili.github.io/cmpm163-f/)
+[View project](https://wiwili.github.io/cmpm163-f/)  
 [SSAO Demo Work](https://wiwili.github.io/cmpm163-f/SSAO/ssao.html)
 Optionally, you may run the web pages locally with a server.
 A Python server is simple enough to get it operational
