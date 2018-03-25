@@ -655,6 +655,39 @@
 	   }
 	</script>
 
+	<script id="steamFragmentShader" type="x-shader/x-fragment">
+			uniform vec2 res; //The width and height of our screen
+			uniform sampler2D bufferTexture; //Our input texture
+			uniform vec3 smokeSource;
+			uniform sampler2D normalTexture;
+			uniform float time;
+
+			void main() {
+			    vec2 pixel = gl_FragCoord.xy / res.xy;
+
+			    gl_FragColor = texture2D( bufferTexture, pixel );
+
+			    float dist = distance(smokeSource.xy+time,gl_FragCoord.xy);
+				gl_FragColor.rgb += smokeSource.z * max(15.0+time-dist,0.0);
+
+				//Smoke diffuse
+            	float xPixel = 1.0/res.x;//The size of a single pixel
+	            float yPixel = 1.0/res.y;
+	            vec4 rightColor = texture2D(bufferTexture,vec2(pixel.x+xPixel,pixel.y));
+	            vec4 leftColor = texture2D(bufferTexture,vec2(pixel.x-xPixel,pixel.y));
+	            vec4 upColor = texture2D(bufferTexture,vec2(pixel.x,pixel.y+yPixel));
+	            vec4 downColor = texture2D(bufferTexture,vec2(pixel.x,pixel.y-yPixel));
+	            //Diffuse equation
+	            float factor = 8.0 * 0.02 * (leftColor.r + rightColor.r + downColor.r * 3.0 + upColor.r - 6.0 * gl_FragColor.r);
+				//We have to account for the low precision of texels
+				float minimum = 0.01;
+				if(factor >= -minimum && factor < 0.0) factor = -minimum;
+
+				gl_FragColor.rgb += factor;
+			}
+		</script>
+
+
 	<script>
 
 		// Load shaders
@@ -664,6 +697,7 @@
   	var simulateCondensationFS = document.getElementById('simulateCondensationFS').textContent;
   	var renderCondensationFS = document.getElementById('renderCondensationFS').textContent;
   	var renderCondensationVS = document.getElementById('renderCondensationVS').textContent;
+  	var steamFS = document.getElementById('steamFragmentShader').textContent;
 
 		// Declare variables
 		var container;
@@ -681,6 +715,9 @@
 
 		// GUI
 		var gui = new dat.GUI( { width: 350 } );
+
+		//Clock
+		var clock = new THREE.Clock();
 		
 		// Condensation
 		var waterBufferMaterial;
@@ -692,6 +729,18 @@
 		var condensationFBO_A;
 		var orthoCamera;
 		var addingWater = true;
+
+		//Steam
+		var bufferScene;
+        var textureA;
+        var textureB;
+        var bufferMaterial;
+        var plane;
+        var bufferObject;
+        var finalMaterial;
+        var quad;
+        var widthChange;
+        var time = 0;
 		
 		init();
 		animate();
@@ -889,8 +938,33 @@
 					});
 			processBlenderObject('json/cupnoodlesoup.json', materialsSoup , new THREE.Vector3(2, -1.5, 0), new THREE.Vector3(1.0,1.0,1.0));
 
+			//Soup steam
+			//Create buffer scene
+            bufferScene = new THREE.Scene();
+            //Create 2 buffer textures
+            textureA = new THREE.WebGLRenderTarget( window.innerWidth, window.innerHeight, { minFilter: THREE.LinearFilter, magFilter: THREE.NearestFilter});
+            textureB = new THREE.WebGLRenderTarget( window.innerWidth, window.innerHeight, { minFilter: THREE.LinearFilter, magFilter: THREE.NearestFilter} );
+            //Pass textureA to shader
+            bufferMaterial = new THREE.ShaderMaterial( {
+                uniforms: {
+                 bufferTexture: { type: "t", value: textureA },
+                 res : {type: 'v2',value:new THREE.Vector2(window.innerWidth,window.innerHeight)},//Keeps the resolution
+                 smokeSource: {type:"v3",value:new THREE.Vector3(0,0,0)},
+                 time: {type:"f", value: time}
+                },
+                fragmentShader: steamFS
+            } );
 
+            plane = new THREE.PlaneBufferGeometry( window.innerWidth/64-window.innerWidth/128,window.innerHeight/64-window.innerHeight/128 );
+            bufferObject = new THREE.Mesh( plane, bufferMaterial );
+            bufferScene.add(bufferObject);
 
+	        finalMaterial =  new THREE.MeshBasicMaterial({map: textureB});
+            quad = new THREE.Mesh( plane, finalMaterial );
+            quad.position.x += 2.0;
+            quad.position.y -= 0.3;
+            scene.add(quad);
+			//processBlenderObject('json/cupnoodlesoup.json', finalMaterial , new THREE.Vector3(2, -1.5, -1), new THREE.Vector3(1.0,1.0,1.0));
 
 			// Setup lighting controller
 			// X
@@ -964,7 +1038,6 @@
 
 		// Animate, calls Render()
 		function animate() {
-
 			requestAnimationFrame( animate );
 			render();
 		}
@@ -972,6 +1045,22 @@
 		function render() {
 			camera.lookAt( scene.position );
 			renderCondensation();
+			
+			bufferMaterial.uniforms.smokeSource.value.x = window.innerWidth/2;
+	  		bufferMaterial.uniforms.smokeSource.value.y = window.innerHeight/2;
+	  		bufferMaterial.uniforms.smokeSource.value.z = 0.1;
+
+	  		time += clock.getDelta();
+	  		bufferMaterial.uniforms.time.value = Math.abs(15.0*Math.random()*(Math.cos(time)+Math.sin(time)));
+          renderer.render(bufferScene,camera,textureB,true);
+        
+          //Swap textureA and B
+          var t = textureA;
+          textureA = textureB;
+          textureB = t;
+          quad.material.map = textureB;
+          bufferMaterial.uniforms.bufferTexture.value = textureA;
+
 			renderer.render( scene, camera );
 		}
 
