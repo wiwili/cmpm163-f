@@ -8,7 +8,7 @@
 
 ## Project Link
 [View project](https://wiwili.github.io/cmpm163-f/)
-[SSAO Progress] (https://wiwili.github.io/cmpm163-f/SSAO/ssao.html)
+[SSAO Demo Work] (https://wiwili.github.io/cmpm163-f/SSAO/ssao.html)
 Optionally, you may run the web pages locally with a server.
 A Python server is simple enough to get it operational
 ```
@@ -19,8 +19,6 @@ Python 3 - python -m http.server *port*
 ## Screenshots
 (https://wiwili.github.io/cmpm163-f/screenshot/1.png)
 (https://wiwili.github.io/cmpm163-f/screenshot/2.png)
-
-[SSAO work demo](https://wiwili.github.io/cmpm163-f/SSAO/ssao.html)
 
 ## Highlight Video
 [YouTube Link](https://youtu.be/Z4W4W9P60iE)
