@@ -9,6 +9,8 @@
 ## Project Link
 [View project](https://wiwili.github.io/cmpm163-f/)
 
+[SSAO work demo](https://wiwili.github.io/cmpm163-f/SSAO/ssao.html)
+
 ## Highlight Video
 [TBD](https://youtube.com)
 
