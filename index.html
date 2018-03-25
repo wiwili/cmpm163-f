@@ -68,6 +68,97 @@
 	
     </script>
 
+	<script id="wineVertexShader" type="x-shader/x-vertex">
+			precision mediump float;
+
+		uniform mat3 normalMatrix;
+		uniform mat4 modelMatrix;
+		uniform mat4 viewMatrix;
+		uniform mat4 projectionMatrix;
+		uniform vec3 cameraPosition;
+
+		attribute vec4 vertex;
+		attribute vec3 normal;
+		attribute vec3 position; 
+		attribute vec2 uv;
+
+		varying vec3 worldNormal;
+		varying vec3 incident;
+		varying vec2 vUV;
+		
+
+		void main() {
+
+
+			vUV = uv; 
+			vec4 worldPosition = modelMatrix * vec4( position, 1.0 ); // world position
+			worldNormal = normalize( mat3( modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz ) * normal ); // world space normal
+			incident = worldPosition.xyz - cameraPosition.xyz;
+			
+			vec4 mvPosition = viewMatrix * modelMatrix * vec4(position, 1.0); // model view position
+
+			gl_Position = projectionMatrix * mvPosition; 
+		}
+	</script>
+	<script id="wineFragmentShader" type="x-shader/x-fragment">
+	precision mediump float;
+	uniform samplerCube tCube;
+	uniform float index1;
+	uniform float index2;
+	uniform float fresPower;
+	uniform float fresBias;
+
+	
+	varying vec2 vUV;
+	varying vec3 worldNormal;
+	varying vec3 incident;
+
+
+	// Schlick's approximation of fresnel
+	// fresnelAngle = index + (1-cos(fresnelAngle))^5 * (1-index)
+		float fresnelApprox(vec3 incident, vec3 normal)
+		{
+			float bias = ((index1 - index2)*(index1-index2))/((index1 + index2)*(index1+index2));
+			float power = fresPower;
+			float scale = 1.0 - bias;
+			
+			return bias + pow(1.0-dot(incident,normal),power)*scale; 
+		}
+	
+
+      	void main() {
+		//normalize vectors
+		vec3 normal = normalize(worldNormal);
+		vec3 incidentN = normalize(incident);
+		
+		// find reflection
+		vec3 reflectV = normalize(reflect(incidentN,normal));
+		vec3 reflectColor = textureCube(tCube,reflectV).xyz;
+		// find refraction
+		vec3 refractColor;
+		refractColor.x = textureCube(tCube, refract(incidentN, normal, index2)).x;
+		refractColor.y = textureCube(tCube, refract(incidentN, normal, index2*0.98)).y;
+		refractColor.z = textureCube(tCube, refract(incidentN, normal, index2*0.96)).z;
+		
+		// Fresnel estimate
+		float fresnelEffect = fresnelApprox(-incidentN, normal);	
+		
+		
+		
+
+		// Mix colors from voronoi with glass reflection
+		vec3 fresCol =  mix(refractColor, reflectColor, fresnelEffect);
+		fresCol.r *= 1.0;
+		fresCol.g *= 0.5;
+		fresCol.b *= 0.5;
+		
+        gl_FragColor = vec4(fresCol,1.0);//c1; //, c2, 0.5);
+		//gl_FragColor = vec4(cellCol,1.0);
+		//gl_FragColor = vec4(thickness,thickness,thickness,1.0);
+	}
+
+	</script>
+
 
   <script id="glassVertexShader" type="x-shader/x-vertex">
 	precision mediump float;
@@ -754,12 +845,20 @@
 			});
 			
 			// Wine wine
+			var w_vs = document.getElementById( 'wineVertexShader' ).textContent;
+			var w_fs = document.getElementById( 'wineFragmentShader' ).textContent;
+			
 			uniforms = {
 				tCube:{type:"t",value:cubeMap},
+				index1: {type:"f",value:1.0}, // Index of air (vacuum)
+				index2: {type:"f",value:1.51714}, // Index of glass
+				fresBias: {type:"f",value:0.15},
+				fresPower: {type:"f",value:2.0},
 			};
-			material = new THREE.MeshStandardMaterial({
+			material = new THREE.RawShaderMaterial({
 				uniforms:uniforms,
-				color: 0xff0000,
+				vertexShader: w_vs,
+				fragmentShader: w_fs,	
 				})
 				
 			processBlenderObject('json/wine.json',material,new THREE.Vector3(0.0,-1.5,0.0), new  THREE.Vector3(0.012,0.012,0.012));
