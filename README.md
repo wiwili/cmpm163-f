@@ -8,7 +8,7 @@
 
 ## Project Link
 [View project](https://wiwili.github.io/cmpm163-f/)  
-[SSAO Demo Work](https://wiwili.github.io/cmpm163-f/SSAO/ssao.html)
+[SSAO Demo Work](https://wiwili.github.io/cmpm163-f/SSAO/ssao.html)  
 Optionally, you may run the web pages locally with a server.
 A Python server is simple enough to get it operational
 ```
